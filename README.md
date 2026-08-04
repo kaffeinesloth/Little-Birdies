@@ -14,12 +14,6 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 | 4 | Đặng Nhật Nam | N22DCDT038 | Documentation & QA | Prepare project documentation, test user flows, support report writing, and validate feature requirements |
 | 5 | Tạ Quang An | N22DCAT003 | Mobile App & QA | Build/support the mobile ticket workflow, push notification flow, and end-to-end testing |
 
-| Item | Detail |
-| --- | --- |
-| Course | Do an AI Helpdesk Agent / AI Development / Product Development Track |
-| Instructor | `[Ten giang vien huong dan]` |
-| Academic year | 2025 - 2026 |
-| Submission deadline | `[Ngay nop]` |
 
 ## Project Overview
 

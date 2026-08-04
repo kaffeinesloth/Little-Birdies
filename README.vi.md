@@ -14,13 +14,6 @@ Smart Helpdesk là nền tảng SaaS giúp các shop online vừa và nhỏ tự
 | 4 | Đặng Nhật Nam | N22DCDT038 | Documentation & QA | Chuẩn bị tài liệu dự án, kiểm thử luồng người dùng, hỗ trợ viết báo cáo, và kiểm tra yêu cầu chức năng |
 | 5 | Tạ Quang An | N22DCAT003 | Mobile App & QA | Xây dựng/hỗ trợ luồng ticket trên mobile, push notification, và kiểm thử end-to-end |
 
-| Mục | Thông tin |
-| --- | --- |
-| Môn học | Đồ án AI Helpdesk Agent / AI Development / Product Development Track |
-| Giảng viên hướng dẫn | `[Tên giảng viên hướng dẫn]` |
-| Năm học | 2025 - 2026 |
-| Hạn nộp | `[Ngày nộp]` |
-
 ## Tổng quan dự án
 
 | Trường | Nội dung |
