@@ -8,10 +8,10 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 
 | # | Full Name | Student ID | Role | Responsibilities |
 | --- | --- | --- | --- | --- |
-| 1 | Huỳnh Bá Anh Khoa | N22DCCN141 | Frontend Developer | Build the Web Admin Dashboard, chat widget UI, demo chat page, and responsive user interface |
+| 1 | Huỳnh Bá Anh Khoa | N22DCCN141 | Frontend Developer | Build the frontend app and web experience, including the Web Admin Dashboard, chat widget UI, demo chat page, and responsive interface |
 | 2 | Vũ Kim Long | N22DCCN050 | Backend Developer | Develop REST APIs, database models, ticket workflow, authentication, and service integrations |
 | 3 | Trần Tuấn Hải | N22DCCN026 | AI Engineer | Build the RAG pipeline, intent classification, AI answer generation, and LLM integration |
-| 4 | Đặng Nhật Nam | N22DCDT038 | Documentation & QA | Prepare project documentation, test user flows, support report writing, and validate feature requirements |
+| 4 | Đặng Nhật Nam | N22DCDT038 | Frontend Support & Testing | Support frontend development, test user flows, support report writing, and validate feature requirements |
 | 5 | Tạ Quang An | N22DCAT003 | AI Engineer - Infrastructure | Set up ChromaDB/VectorDB, build the document processor pipeline (PDF to chunks to embeddings), and implement FastAPI endpoints for the AI microservice |
 
 
