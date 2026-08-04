@@ -26,7 +26,8 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 | Field | Detail |
 | --- | --- |
 | Project name | Smart Helpdesk - AI-Powered Customer Support System |
-| Type | SaaS Platform: Web Admin + Mobile App + AI Agent |
+| Tagline | "Tu dong hoa CSKH. Xu ly khieu nai tuc thi." |
+| Type | SaaS Platform: Web + Mobile App + AI Agent |
 | Domain | Customer Service / SaaS |
 | Target users | Small and medium online shop owners, e-commerce sellers, and customer service staff |
 | Core technology | LLM, RAG, LangChain, FastAPI, Supabase, Flutter |
@@ -63,7 +64,7 @@ If an AI system can answer frequently asked questions 24/7 and detect when a cus
 Smart Helpdesk combines five main components:
 
 - AI Agent with RAG: Reads business documents such as product information, return policy, warranty policy, and pricing documents to answer customer questions accurately.
-- Intent Classification: Detects whether a message is a normal question, buying intent, complaint, or urgent issue.
+- Intent Classification: Detects whether a message is an information request, complaint, or spam, then escalates serious complaints to staff.
 - Omnichannel Unified Inbox: Brings messages from website chat, Facebook Messenger, and email into one support system.
 - Web Admin Dashboard: Allows business owners to upload documents, manage tickets, view reports, and manage support staff.
 - Mobile App for Staff: Sends urgent ticket notifications and lets customer service staff handle difficult cases anytime.
@@ -98,11 +99,25 @@ BACKEND & AI CORE
         |               +--> Search uploaded documents
         |               +--> Auto-reply to customer
         |
-        +--> Realtime Ticket Sync
+        +--> Supabase Realtime Sync
                 |
-                +--> Mobile App for staff
-                +--> Web Admin Dashboard for owner/manager
+                +--> Web Admin with RBAC
+                +--> Mobile App with RBAC and push notifications
 ```
+
+## Role-Based Access Control
+
+The system uses one account system and one JWT token from Supabase Auth. After login, the app reads the `role` field in the `users` table and renders the correct web or mobile experience.
+
+| Feature | super_admin on Web | agent on Web | Mobile App, both roles |
+| --- | :---: | :---: | :---: |
+| Unified Inbox: view and reply | All tickets | Assigned/open tickets | Yes |
+| Push Notification | Browser notification only | Browser notification only | Main feature |
+| Customer chat history | Yes | Yes | Yes |
+| Analytics dashboard | Full | No | Simple view |
+| Knowledge Base upload | Yes | No | No |
+| Staff account management | Yes | No | No |
+| Channel settings: Facebook webhook and email | Yes | No | No |
 
 ## Main Modules
 
@@ -110,36 +125,52 @@ BACKEND & AI CORE
 
 The chat widget is used by customers on the business website.
 
-- Display a chat box at the bottom-right corner of the website.
+- Embed on any website with one `<script>` tag.
+- Display a floating chat box at the bottom-right corner of the website.
 - Send and receive text messages in realtime.
 - Show a typing indicator while the AI is processing.
 - Support seamless handoff from AI to human staff without resetting the chat.
+- Display a source-channel badge for Web, Facebook, or Email.
 
-### 2. Web Admin Dashboard
+### 2. Web Admin Dashboard: super_admin
 
-The admin dashboard is used by shop owners and managers.
+The full admin dashboard is used by shop owners and managers.
 
-- Login and role-based access for managers and staff.
+- Login with email/password through Supabase Auth.
+- View and reply to every message from Web, Facebook, and Email in the Unified Inbox.
+- Filter Inbox by channel and ticket status: Open, In Progress, Resolved.
 - Upload PDF or Word documents to build the AI knowledge base.
-- View all tickets and their status: Open, Pending, Resolved.
 - View dashboard statistics such as message count, AI resolution rate, and average response time.
 - Manage customer service staff accounts.
+- Configure Facebook webhook and inbound email settings.
 
-### 3. Mobile App
+### 3. Web Admin Dashboard: agent
+
+The limited web dashboard is used by customer service staff working from a computer.
+
+- Login with an account created by a super_admin.
+- View and reply to assigned or open tickets.
+- View the full customer chat history in a context viewer.
+- Update ticket status to In Progress or Resolved.
+- Hide Dashboard, Knowledge Base, staff management, and channel settings.
+
+### 4. Mobile App
 
 The mobile app is used by customer service staff.
 
-- Login and switch Online/Offline status.
-- Receive push notifications when urgent tickets are created.
+- Login with the same Supabase Auth account used on Web.
+- Switch Online/Offline status.
+- Receive push notifications when a new ticket or urgent message is created.
+- View and reply to realtime messages with the same permissions as the user's role.
 - View the full customer chat history for context.
-- Chat directly with customers in realtime.
 - Close tickets after they are resolved.
+- Let super_admin users view a simplified dashboard.
 
-### 4. AI Core
+### 5. AI Core
 
 The AI Core powers the automation layer.
 
-- Classify customer intent.
+- Classify customer intent as information request, complaint, or spam.
 - Answer questions using uploaded documents with RAG.
 - Create tickets when complaints or urgent messages are detected.
 - Send push notifications for urgent tickets.
@@ -173,35 +204,47 @@ The AI Core powers the automation layer.
 
 ### Chat Widget
 
-- [ ] Display a website chat box.
+- [ ] Display a floating website chat box at the bottom-right corner.
 - [ ] Send and receive realtime text messages.
 - [ ] Show typing indicator while AI is processing.
-- [ ] Support handoff from AI to human staff.
+- [ ] Support seamless handoff from AI to human staff without resetting chat history.
+- [ ] Display source-channel badge for Web, Facebook, or Email.
 
-### Web Admin Dashboard
+### Web Admin Dashboard: super_admin
 
-- [ ] Support login and role-based access.
-- [ ] Upload PDF/Word files for the knowledge base.
-- [ ] Show ticket list and ticket status.
-- [ ] Show dashboard analytics.
-- [ ] Manage staff accounts.
+- [ ] Login with email/password through Supabase Auth.
+- [ ] View and reply to all messages from Web, Facebook, and Email in the Unified Inbox.
+- [ ] Filter Inbox by channel and ticket status: Open, In Progress, Resolved.
+- [ ] Show dashboard analytics: total messages, AI handling rate, and average response time.
+- [ ] Upload PDF/Word files for the AI knowledge base and view uploaded documents.
+- [ ] Create/delete agent accounts and assign roles.
+- [ ] Configure Facebook webhook and inbound email address.
+
+### Web Admin Dashboard: agent
+
+- [ ] Login with an account created by a super_admin.
+- [ ] View and reply to assigned or open tickets.
+- [ ] View full customer chat history.
+- [ ] Update ticket status to In Progress or Resolved.
+- [ ] Hide Dashboard, Knowledge Base, staff management, and channel settings.
 
 ### Mobile App
 
-- [ ] Support staff login.
-- [ ] Let staff switch Online/Offline status.
-- [ ] Receive push notifications for urgent tickets.
+- [ ] Login with the same account as Web through Supabase Auth.
+- [ ] Let users switch Online/Offline status.
+- [ ] Receive push notifications for new tickets or urgent messages.
+- [ ] View and reply to realtime messages with role-based permissions.
 - [ ] Show full customer chat context.
-- [ ] Support realtime chat with customers.
 - [ ] Close tickets after resolution.
+- [ ] Show simple dashboard statistics for super_admin users.
 
 ### AI Core
 
-- [ ] Classify message intent.
+- [ ] Classify message intent: information request, complaint, or spam.
 - [ ] Answer common questions using RAG.
-- [ ] Create urgent tickets for complaints.
+- [ ] Create tickets and send push notifications for complaints.
 - [ ] Receive Facebook Messenger and email webhooks.
-- [ ] Sync realtime data between web and mobile.
+- [ ] Sync realtime data across the system with Supabase Realtime.
 
 ## Non-Functional Requirements
 

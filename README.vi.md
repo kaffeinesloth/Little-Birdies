@@ -26,7 +26,8 @@ Smart Helpdesk là nền tảng SaaS giúp các shop online vừa và nhỏ tự
 | Trường | Nội dung |
 | --- | --- |
 | Tên dự án | Smart Helpdesk - AI-Powered Customer Support System |
-| Loại sản phẩm | SaaS Platform: Web Admin + Mobile App + AI Agent |
+| Khẩu hiệu | "Tự động hóa CSKH. Xử lý khiếu nại tức thì." |
+| Loại sản phẩm | SaaS Platform: Web + Mobile App + AI Agent |
 | Lĩnh vực | Customer Service / SaaS |
 | Người dùng mục tiêu | Chủ shop online vừa và nhỏ, người bán hàng thương mại điện tử, nhân viên CSKH |
 | Công nghệ cốt lõi | LLM, RAG, LangChain, FastAPI, Supabase, Flutter |
@@ -63,7 +64,7 @@ Nếu có một hệ thống AI có thể trả lời câu hỏi thường gặp
 Smart Helpdesk kết hợp năm thành phần chính:
 
 - AI Agent với RAG: Đọc tài liệu của doanh nghiệp như thông tin sản phẩm, chính sách đổi trả, bảo hành, và bảng giá để trả lời khách hàng chính xác.
-- Intent Classification: Nhận diện tin nhắn là câu hỏi thông thường, ý định mua hàng, khiếu nại, hay vấn đề khẩn cấp.
+- Intent Classification: Nhận diện tin nhắn là hỏi thông tin, khiếu nại, hoặc spam, sau đó chuyển các khiếu nại nghiêm trọng cho nhân viên.
 - Omnichannel Unified Inbox: Gom tin nhắn từ website chat, Facebook Messenger, và email vào một hệ thống hỗ trợ duy nhất.
 - Web Admin Dashboard: Cho phép chủ doanh nghiệp upload tài liệu, quản lý ticket, xem báo cáo, và quản lý nhân viên CSKH.
 - Mobile App cho nhân viên: Gửi thông báo ticket khẩn cấp và cho phép nhân viên xử lý các ca khó mọi lúc mọi nơi.
@@ -98,11 +99,25 @@ BACKEND & AI CORE
         |               +--> Tìm trong tài liệu đã upload
         |               +--> Tự động trả lời khách hàng
         |
-        +--> Đồng bộ Ticket realtime
+        +--> Đồng bộ Supabase Realtime
                 |
-                +--> Mobile App cho nhân viên
-                +--> Web Admin Dashboard cho chủ shop/quản lý
+                +--> Web Admin có RBAC
+                +--> Mobile App có RBAC và push notification
 ```
+
+## Phân quyền truy cập theo vai trò
+
+Hệ thống dùng một hệ tài khoản duy nhất và một JWT token từ Supabase Auth. Sau khi đăng nhập, ứng dụng đọc trường `role` trong bảng `users` để hiển thị đúng giao diện Web hoặc Mobile.
+
+| Tính năng | super_admin trên Web | agent trên Web | Mobile App, cả hai role |
+| --- | :---: | :---: | :---: |
+| Unified Inbox: xem và reply | Tất cả ticket | Ticket được giao/đang mở | Có |
+| Push Notification | Browser notification | Browser notification | Tính năng chính |
+| Lịch sử chat khách hàng | Có | Có | Có |
+| Dashboard thống kê | Đầy đủ | Không | Bản đơn giản |
+| Upload Knowledge Base | Có | Không | Không |
+| Quản lý tài khoản nhân viên | Có | Không | Không |
+| Cài đặt kênh: Facebook webhook và email | Có | Không | Không |
 
 ## Các module chính
 
@@ -110,36 +125,52 @@ BACKEND & AI CORE
 
 Chat widget được khách hàng sử dụng trên website của doanh nghiệp.
 
+- Nhúng vào bất kỳ website nào bằng một thẻ `<script>`.
 - Hiển thị khung chat ở góc dưới bên phải website.
 - Gửi và nhận tin nhắn text theo thời gian thực.
 - Hiển thị typing indicator khi AI đang xử lý.
 - Hỗ trợ chuyển giao từ AI sang nhân viên thật mà không reset đoạn chat.
+- Hiển thị badge nguồn kênh Web, Facebook, hoặc Email.
 
-### 2. Web Admin Dashboard
+### 2. Web Admin Dashboard: super_admin
 
-Admin dashboard được sử dụng bởi chủ shop và quản lý.
+Admin dashboard đầy đủ được sử dụng bởi chủ shop và quản lý.
 
-- Đăng nhập và phân quyền theo vai trò manager/staff.
+- Đăng nhập bằng email/password qua Supabase Auth.
+- Xem và reply tất cả tin nhắn từ Web, Facebook, và Email trong Unified Inbox.
+- Lọc Inbox theo kênh và trạng thái ticket: Open, In Progress, Resolved.
 - Upload file PDF hoặc Word để tạo knowledge base cho AI.
-- Xem danh sách ticket và trạng thái: Open, Pending, Resolved.
 - Xem thống kê dashboard như số tin nhắn, tỉ lệ AI tự xử lý, và thời gian phản hồi trung bình.
 - Quản lý tài khoản nhân viên CSKH.
+- Cấu hình Facebook webhook và địa chỉ email nhận tin.
 
-### 3. Mobile App
+### 3. Web Admin Dashboard: agent
+
+Dashboard Web giới hạn được sử dụng bởi nhân viên CSKH làm việc trên máy tính.
+
+- Đăng nhập bằng tài khoản do super_admin tạo.
+- Xem và reply ticket được giao hoặc đang mở.
+- Xem toàn bộ lịch sử chat của khách hàng trong context viewer.
+- Cập nhật trạng thái ticket thành In Progress hoặc Resolved.
+- Không hiển thị Dashboard, Knowledge Base, quản lý nhân sự, và cài đặt kênh.
+
+### 4. Mobile App
 
 Mobile app được sử dụng bởi nhân viên CSKH.
 
-- Đăng nhập và bật/tắt trạng thái Online/Offline.
-- Nhận push notification khi có ticket khẩn cấp.
+- Đăng nhập bằng cùng tài khoản Supabase Auth với Web.
+- Bật/tắt trạng thái Online/Offline.
+- Nhận push notification khi có ticket mới hoặc tin nhắn khẩn cấp.
+- Xem và reply tin nhắn realtime theo đúng quyền của role.
 - Xem đầy đủ lịch sử chat của khách hàng để nắm ngữ cảnh.
-- Chat trực tiếp với khách hàng theo thời gian thực.
 - Đóng ticket sau khi xử lý xong.
+- Cho phép super_admin xem dashboard thống kê đơn giản.
 
-### 4. AI Core
+### 5. AI Core
 
 AI Core là lớp tự động hóa của hệ thống.
 
-- Phân loại ý định của khách hàng.
+- Phân loại ý định của khách hàng: hỏi thông tin, khiếu nại, hoặc spam.
 - Trả lời câu hỏi bằng RAG dựa trên tài liệu đã upload.
 - Tạo ticket khi phát hiện khiếu nại hoặc tin nhắn khẩn cấp.
 - Gửi push notification cho ticket khẩn cấp.
@@ -173,35 +204,47 @@ AI Core là lớp tự động hóa của hệ thống.
 
 ### Chat Widget
 
-- [ ] Hiển thị khung chat trên website.
+- [ ] Hiển thị khung chat nổi ở góc phải màn hình.
 - [ ] Gửi và nhận tin nhắn realtime.
 - [ ] Hiển thị typing indicator khi AI đang xử lý.
-- [ ] Hỗ trợ handoff từ AI sang nhân viên.
+- [ ] Hỗ trợ handoff từ AI sang nhân viên mà không reset lịch sử chat.
+- [ ] Hiển thị badge nguồn kênh Web, Facebook, hoặc Email.
 
-### Web Admin Dashboard
+### Web Admin Dashboard: super_admin
 
-- [ ] Hỗ trợ đăng nhập và phân quyền.
-- [ ] Upload file PDF/Word cho knowledge base.
-- [ ] Hiển thị danh sách ticket và trạng thái ticket.
-- [ ] Hiển thị dashboard thống kê.
-- [ ] Quản lý tài khoản nhân viên.
+- [ ] Đăng nhập bằng email/password qua Supabase Auth.
+- [ ] Xem và reply tất cả tin nhắn từ Web, Facebook, và Email trong Unified Inbox.
+- [ ] Lọc Inbox theo kênh và trạng thái ticket: Open, In Progress, Resolved.
+- [ ] Hiển thị dashboard thống kê: tổng tin nhắn, tỉ lệ AI xử lý, thời gian phản hồi trung bình.
+- [ ] Upload PDF/Word cho Knowledge Base AI và xem danh sách tài liệu đã upload.
+- [ ] Tạo/xóa tài khoản agent và phân quyền role.
+- [ ] Cấu hình Facebook webhook và địa chỉ email nhận tin.
+
+### Web Admin Dashboard: agent
+
+- [ ] Đăng nhập bằng tài khoản do super_admin tạo.
+- [ ] Xem và reply ticket được giao hoặc đang mở.
+- [ ] Xem toàn bộ lịch sử chat của khách hàng.
+- [ ] Cập nhật trạng thái ticket thành In Progress hoặc Resolved.
+- [ ] Không hiển thị Dashboard, Knowledge Base, quản lý nhân sự, và cài đặt kênh.
 
 ### Mobile App
 
-- [ ] Hỗ trợ đăng nhập cho nhân viên.
-- [ ] Cho phép nhân viên chuyển trạng thái Online/Offline.
-- [ ] Nhận push notification cho ticket khẩn cấp.
+- [ ] Đăng nhập bằng cùng tài khoản với Web qua Supabase Auth.
+- [ ] Cho phép người dùng chuyển trạng thái Online/Offline.
+- [ ] Nhận push notification cho ticket mới hoặc tin nhắn khẩn cấp.
+- [ ] Xem và reply tin nhắn realtime theo phân quyền role.
 - [ ] Hiển thị đầy đủ ngữ cảnh chat của khách hàng.
-- [ ] Hỗ trợ chat realtime với khách hàng.
 - [ ] Đóng ticket sau khi xử lý.
+- [ ] Hiển thị thống kê đơn giản cho super_admin.
 
 ### AI Core
 
-- [ ] Phân loại intent của tin nhắn.
+- [ ] Phân loại intent của tin nhắn: hỏi thông tin, khiếu nại, hoặc spam.
 - [ ] Trả lời câu hỏi thường gặp bằng RAG.
-- [ ] Tạo ticket khẩn cấp cho khiếu nại.
+- [ ] Tạo ticket và gửi push notification khi phát hiện khiếu nại.
 - [ ] Nhận webhook từ Facebook Messenger và email.
-- [ ] Đồng bộ realtime giữa web và mobile.
+- [ ] Đồng bộ realtime toàn bộ hệ thống qua Supabase Realtime.
 
 ## Yêu cầu phi chức năng
 
