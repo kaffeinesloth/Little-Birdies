@@ -63,6 +63,50 @@ Smart Helpdesk combines five main components:
 - Web Admin Dashboard: Allows business owners to upload documents, manage tickets, view reports, and manage support staff.
 - Mobile App for Staff: Sends urgent ticket notifications and lets customer service staff handle difficult cases anytime.
 
+## Customer Profile
+
+**Customer Segment:** Small and medium e-commerce businesses and online shop owners.
+
+### Customer Jobs
+
+- Read and reply to buyer messages.
+- Look up product information, shipping fees, and warranty policies.
+- Manually filter and prioritize incoming messages.
+
+### Pains
+
+- Message overload, especially at night or outside office hours, makes customers wait and may cause canceled orders.
+- High cost of hiring staff to monitor customer channels 24/7.
+- Missed serious complaint messages can damage business reputation.
+- Repetitive questions create fatigue and stress for customer service staff.
+
+### Gains
+
+- Reduce staff workload and save operating costs.
+- Respond to customers as quickly as possible.
+- Intervene in time when customers are unhappy.
+- Use a dashboard to monitor employee performance.
+
+## Value Map
+
+### Products and Services
+
+- Website Admin: Upload store documents, policies, and operational knowledge.
+- Mobile App: Let customer service staff receive instant notifications on their phones.
+- AI Agent with LLM and RAG: Understand uploaded documents, chat with customers automatically, and classify message sentiment or intent.
+
+### Pain Relievers
+
+- AI Agent works 24/7 and immediately answers frequently asked questions.
+- Reduce missed messages and support faster complaint handling.
+- Lower dependence on human staff for repetitive tasks.
+
+### Gain Creators
+
+- Faster response time improves customer experience and conversion opportunities.
+- Unified Inbox gives teams one place to track conversations across channels.
+- Analytics help owners understand support performance and AI automation rate.
+
 ## Expected Impact
 
 | Metric | Before Smart Helpdesk | After Smart Helpdesk |

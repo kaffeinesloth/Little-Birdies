@@ -62,6 +62,50 @@ Smart Helpdesk kết hợp năm thành phần chính:
 - Web Admin Dashboard: Cho phép chủ doanh nghiệp upload tài liệu, quản lý ticket, xem báo cáo, và quản lý nhân viên CSKH.
 - Mobile App cho nhân viên: Gửi thông báo ticket khẩn cấp và cho phép nhân viên xử lý các ca khó mọi lúc mọi nơi.
 
+## Hồ sơ khách hàng
+
+**Phân khúc khách hàng:** Doanh nghiệp TMĐT vừa và nhỏ (SME), chủ shop online.
+
+### Customer Jobs
+
+- Đọc và trả lời tin nhắn của người mua hàng.
+- Tra cứu thông tin sản phẩm, phí ship, và chính sách bảo hành.
+- Sàng lọc và ưu tiên tin nhắn thủ công.
+
+### Pains
+
+- Quá tải tin nhắn, đặc biệt là vào ban đêm hoặc ngoài giờ hành chính, khiến khách phải chờ lâu và có thể hủy đơn.
+- Tốn nhiều chi phí để thuê nhân sự trực page 24/7.
+- Bỏ sót các tin nhắn khiếu nại nghiêm trọng, làm ảnh hưởng uy tín.
+- Mệt mỏi và stress vì phải trả lời những câu hỏi y hệt nhau.
+
+### Gains
+
+- Giảm tải công việc cho nhân sự và tiết kiệm chi phí vận hành.
+- Khách hàng được phản hồi nhanh nhất có thể.
+- Can thiệp kịp thời khi khách hàng không hài lòng.
+- Có dashboard để kiểm soát hiệu quả làm việc của nhân viên.
+
+## Bản đồ giá trị
+
+### Products and Services
+
+- Website Admin: Nơi upload tài liệu, chính sách, và tri thức vận hành của cửa hàng.
+- Mobile App: Ứng dụng điện thoại dành cho nhân viên CSKH để nhận thông báo tức thì.
+- AI Agent với LLM và RAG: Đọc hiểu tài liệu đã upload, tự chat với khách, và tự động phân loại cảm xúc hoặc ý định tin nhắn.
+
+### Pain Relievers
+
+- AI Agent trực 24/7, tự động trả lời ngay các câu hỏi thường gặp.
+- Tránh bỏ sót tin nhắn và xử lý khiếu nại nhanh chóng hơn.
+- Giảm sự phụ thuộc vào con người cho các tác vụ lặp lại.
+
+### Gain Creators
+
+- Thời gian phản hồi nhanh hơn giúp cải thiện trải nghiệm khách hàng và cơ hội chuyển đổi.
+- Unified Inbox giúp đội ngũ theo dõi hội thoại từ nhiều kênh tại một nơi.
+- Dashboard thống kê giúp chủ shop nắm hiệu quả CSKH và tỷ lệ tự động hóa của AI.
+
 ## Tác động kỳ vọng
 
 | Chỉ số | Trước Smart Helpdesk | Sau Smart Helpdesk |
