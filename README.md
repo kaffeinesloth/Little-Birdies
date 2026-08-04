@@ -12,7 +12,7 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 | 2 | Vũ Kim Long | N22DCCN050 | Backend Developer | Develop REST APIs, database models, ticket workflow, authentication, and service integrations |
 | 3 | Trần Tuấn Hải | N22DCCN026 | AI Engineer | Build the RAG pipeline, intent classification, AI answer generation, and LLM integration |
 | 4 | Đặng Nhật Nam | N22DCDT038 | Documentation & QA | Prepare project documentation, test user flows, support report writing, and validate feature requirements |
-| 5 | Tạ Quang An | N22DCAT003 | Mobile App & QA | Build/support the mobile ticket workflow, push notification flow, and end-to-end testing |
+| 5 | Tạ Quang An | N22DCAT003 | AI Engineer - Infrastructure | Set up ChromaDB/VectorDB, build the document processor pipeline (PDF to chunks to embeddings), and implement FastAPI endpoints for the AI microservice |
 
 
 ## Project Overview

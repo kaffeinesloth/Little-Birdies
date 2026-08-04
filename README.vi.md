@@ -12,7 +12,7 @@ Smart Helpdesk là nền tảng SaaS giúp các shop online vừa và nhỏ tự
 | 2 | Vũ Kim Long | N22DCCN050 | Backend Developer | Xây dựng REST API, database models, quy trình ticket, authentication, và tích hợp dịch vụ |
 | 3 | Trần Tuấn Hải | N22DCCN026 | AI Engineer | Xây dựng RAG pipeline, intent classification, tạo câu trả lời bằng AI, và tích hợp LLM |
 | 4 | Đặng Nhật Nam | N22DCDT038 | Documentation & QA | Chuẩn bị tài liệu dự án, kiểm thử luồng người dùng, hỗ trợ viết báo cáo, và kiểm tra yêu cầu chức năng |
-| 5 | Tạ Quang An | N22DCAT003 | Mobile App & QA | Xây dựng/hỗ trợ luồng ticket trên mobile, push notification, và kiểm thử end-to-end |
+| 5 | Tạ Quang An | N22DCAT003 | AI Engineer - Infrastructure | Setup ChromaDB/VectorDB, xây dựng Document Processor (PDF -> chunk -> embed), và FastAPI endpoints cho AI microservice |
 
 ## Tổng quan dự án
 
