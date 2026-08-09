@@ -27,6 +27,84 @@ Smart Helpdesk là nền tảng SaaS giúp các shop online vừa và nhỏ tự
 | Mục tiêu chính | Giảm công việc CSKH lặp lại và tránh bỏ sót các tin nhắn khẩn cấp |
 | Thời gian phát triển | 3 tuần |
 
+## Trạng thái demo đã triển khai
+
+Repository hiện là một monorepo Smart Helpdesk AI có thể chạy demo local:
+
+- `services/api`: Backend FastAPI có health check, data access mock tương thích Supabase, auth/RBAC, API ticket/message, webhook Web/Facebook/Email, notification/presence, xử lý lỗi an toàn, CORS, và bảo vệ rate limit cho public endpoint.
+- `services/ai`: AI microservice FastAPI có health check, fallback phân loại intent deterministic, xử lý tài liệu TXT/PDF/DOCX, RAG với ChromaDB, và fallback local khi chưa có LLM credential.
+- `apps/web-admin`: Dashboard Next.js App Router có login/mock auth, navigation theo role, Unified Inbox, Knowledge Base upload UI, quản lý staff, Channel Settings, dashboard metrics, và widget demo.
+- `apps/mobile`: Flutter app cho nhân viên CSKH có login/mock auth, navigation theo role, Inbox, Ticket Detail, Notifications, dashboard đơn giản cho admin, Settings/Profile, Online/Offline toggle, heartbeat, và mock push notification.
+- `infra/supabase`: SQL migrations cho profile liên kết Supabase Auth, tickets, messages, documents, channels, notifications, enum, index, và ghi chú/policy RLS.
+- `docs`: Tài liệu local demo, deployment, security, integrations, testing, và demo script.
+
+Dự án có thể demo local mà không cần credential thật của Supabase, Facebook, Email, FCM, OpenAI, hoặc Gemini. Các tích hợp production được ghi rõ là boundary cần cấu hình bên ngoài.
+
+## Chạy demo local nhanh
+
+Chi tiết đầy đủ nằm trong [`docs/local-demo.md`](docs/local-demo.md). Tóm tắt:
+
+1. Chạy AI service:
+
+```sh
+cd services/ai
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+APP_ENV=development RAG_CONFIDENCE_THRESHOLD=0.0 CHROMA_DB_PATH=./chroma uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+```
+
+2. Nạp file Knowledge Base mẫu:
+
+```sh
+curl -X POST http://127.0.0.1:8001/documents/process \
+  -H "Content-Type: application/json" \
+  -d '{"document_id":"demo-support-policy","file_url":"../../docs/demo-data/sample-support-policy.txt","file_type":"txt","file_name":"sample-support-policy.txt","file_size_bytes":856}'
+```
+
+3. Chạy API service:
+
+```sh
+cd services/api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+APP_ENV=development LOCAL_MOCK_AUTH_ENABLED=true AI_SERVICE_URL=http://127.0.0.1:8001 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+4. Chạy Web Admin:
+
+```sh
+cd apps/web-admin
+./node_modules/.bin/next dev --hostname 127.0.0.1 --port 3000
+```
+
+Mở `http://127.0.0.1:3000/login` và dùng:
+
+- `owner@example.com` / `password` cho `super_admin`
+- `agent@example.com` / `password` cho `agent`
+
+5. Chạy Mobile nếu môi trường hỗ trợ:
+
+```sh
+cd apps/mobile
+flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+## Kịch bản demo cuối kỳ
+
+Dùng [`docs/demo-script.md`](docs/demo-script.md) khi thuyết trình:
+
+1. Bài toán kinh doanh.
+2. Admin upload Knowledge Base.
+3. Khách hàng hỏi FAQ trong widget.
+4. AI trả lời tức thì bằng RAG.
+5. Khách hàng gửi khiếu nại.
+6. AI escalates sang ticket cho người thật.
+7. Agent nhận ticket/thông báo.
+8. Agent reply và resolve.
+9. Dashboard cập nhật.
+
 ## Cảm hứng
 
 Ý tưởng bắt đầu từ một trải nghiệm thực tế của một thành viên trong nhóm, người có dạy thêm một lớp thể thao ngoài giờ học.
@@ -118,29 +196,76 @@ Smart Helpdesk kết hợp năm thành phần chính:
 ## Kiến trúc hệ thống
 
 ```text
-PHÍA KHÁCH HÀNG
-Web Chat Widget / Facebook Messenger / Email Inbox
+INPUT LAYER
+Web Chat Widget / Facebook Messenger / Email Webhook
         |
         | Tin nhắn và webhook
         v
-BACKEND & AI CORE
+ORCHESTRATOR LAYER
+Nhận tin nhắn -> gắn source và sender_id -> lưu message -> đưa vào hàng đợi xử lý
         |
-        +--> Intent Classifier
-        |       |
-        |       +--> Khiếu nại hoặc vấn đề khẩn cấp
-        |       |       +--> Tạo Ticket
-        |       |       +--> Gửi Push Notification
-        |       |
-        |       +--> Câu hỏi thông thường
-        |               +--> RAG Agent
-        |               +--> Tìm trong tài liệu đã upload
-        |               +--> Tự động trả lời khách hàng
+        v
+AI CORE LAYER
+Intent Classifier -> RAG Agent với ChromaDB -> LLM sinh câu trả lời
         |
-        +--> Đồng bộ Supabase Realtime
-                |
-                +--> Web Admin có RBAC
-                +--> Mobile App có RBAC và push notification
+        v
+OUTPUT LAYER
+Tự trả lời đúng kênh gốc HOẶC tạo ticket và thông báo nhân viên
+        |
+        +--> Web Admin có RBAC
+        +--> Mobile App có FCM push notification
 ```
+
+## Đặc tả hệ thống hiện tại
+
+Đặc tả mới nhất định nghĩa Smart Helpdesk là hệ thống bốn lớp:
+
+| Lớp | Trách nhiệm |
+| --- | --- |
+| Input Layer | Nhận tin nhắn từ Web Widget, Facebook Messenger webhook, và Email webhook. |
+| Orchestrator Layer | Gắn `source` và `sender_id`, lưu message, và bắt đầu xử lý AI. |
+| AI Core Layer | Phân loại intent, chạy RAG với ChromaDB, sinh câu trả lời, hoặc kích hoạt tạo ticket. |
+| Output Layer | Trả lời đúng kênh gốc của khách, cập nhật Web Admin, và thông báo Mobile App. |
+
+### Tác nhân
+
+| Tác nhân | Vai trò |
+| --- | --- |
+| Khách hàng | Gửi tin nhắn qua Web Widget, Facebook Messenger, hoặc Email. |
+| Super Admin | Chủ shop hoặc quản lý, có quyền Inbox, Dashboard, Knowledge Base, quản lý nhân viên, và cài đặt kênh. |
+| Agent | Xử lý ticket được giao hoặc ticket đang mở và trả lời khách hàng. |
+| AI Bot | Phân loại intent, trả lời bằng RAG, tạo ticket, và kích hoạt thông báo. |
+| Hệ thống ngoài | Facebook Messenger API, Mailgun, hoặc SendGrid gửi webhook và nhận phản hồi outbound. |
+
+### Bản đồ Use Case
+
+| ID | Use Case | Tác nhân chính | Kết quả |
+| --- | --- | --- | --- |
+| UC01 | Gửi tin nhắn | Khách hàng / Hệ thống ngoài | Message được lưu với `source`, `sender_id`, và trạng thái xử lý. |
+| UC02 | Nhận phản hồi từ AI | Khách hàng / AI Bot | Câu trả lời được gửi về Web, Facebook, hoặc Email và lưu với `sender_type = bot`. |
+| UC03 | Chuyển giao nhân viên | Khách hàng / AI Bot / Agent | Ticket được tạo và hội thoại tiếp tục với nhân viên thật. |
+| UC04 | Đăng nhập | Super Admin / Agent | Supabase Auth xác thực và hiển thị giao diện theo role. |
+| UC05 | Xem Unified Inbox | Super Admin / Agent | Người dùng thấy ticket realtime theo quyền. |
+| UC06 | Reply khách hàng | Super Admin / Agent | Reply của nhân viên được gửi qua kênh gốc và lưu với `sender_type = human`. |
+| UC07 | Đóng ticket | Super Admin / Agent | Ticket chuyển `resolved`, lưu `resolved_at`, và gửi tin nhắn kết thúc. |
+| UC08 | Upload tài liệu AI | Super Admin | File PDF, DOCX, hoặc TXT được upload, chunk, embed, và lưu vào ChromaDB. |
+| UC09 | Xem dashboard | Super Admin | Admin thấy số tin nhắn, tỉ lệ AI xử lý, thời gian phản hồi, ticket mở, xu hướng, và top câu hỏi. |
+| UC10 | Quản lý nhân viên | Super Admin | Tài khoản agent được tạo, mời, cập nhật, hoặc vô hiệu hóa. |
+| UC11 | Cài đặt kênh | Super Admin | Thông tin Facebook và Email được lưu và kiểm tra kết nối. |
+| UC12 | Nhận push notification | Agent / Super Admin | Nhân viên online nhận FCM notification cho ticket khẩn cấp. |
+| UC13 | Bật/tắt Online | Agent | Trạng thái sẵn sàng được cập nhật và ảnh hưởng đến phân phối ticket. |
+| UC14 | Phân loại intent | AI Bot | Message được gắn nhãn `question`, `complaint`, hoặc `spam`. |
+| UC15 | Trả lời bằng RAG | AI Bot | Top-3 chunk liên quan được truy xuất và dùng để trả lời khách. |
+| UC16 | Tạo ticket khẩn cấp | AI Bot | Khiếu nại hoặc câu hỏi AI không trả lời được trở thành ticket và thông báo nhân viên. |
+
+### Luồng chính
+
+1. Khách hàng gửi tin nhắn qua Web, Facebook, hoặc Email.
+2. Orchestrator lưu message và gắn kênh nguồn.
+3. AI phân loại message thành `question`, `complaint`, hoặc `spam`.
+4. Nếu intent là `question`, RAG Agent tìm trong ChromaDB và trả lời khi có context phù hợp.
+5. Nếu intent là `complaint` hoặc RAG không tìm được context đủ tốt, hệ thống gửi tin xoa dịu, tạo ticket, và thông báo agent online.
+6. Nhân viên reply từ Web Admin hoặc Mobile App, và reply được route về đúng kênh gốc của khách.
 
 ## Phân quyền truy cập theo vai trò
 
@@ -156,6 +281,13 @@ Hệ thống dùng một hệ tài khoản duy nhất và một JWT token từ S
 | Quản lý tài khoản nhân viên | Có | Không | Không |
 | Cài đặt kênh: Facebook webhook và email | Có | Không | Không |
 
+Quy tắc hiển thị theo role:
+
+- `super_admin` xem được tất cả ticket.
+- `agent` xem được ticket được giao cho mình và ticket đang mở có thể xử lý.
+- Tài khoản bị vô hiệu hóa không thể đăng nhập, nhưng lịch sử chat vẫn được giữ lại.
+- Agent online nhận push notification khẩn cấp; agent offline giữ các ticket đang xử lý nhưng không nhận ticket khẩn cấp mới.
+
 ## Các module chính
 
 ### 1. Chat Widget
@@ -168,6 +300,7 @@ Chat widget được khách hàng sử dụng trên website của doanh nghiệp
 - Hiển thị typing indicator khi AI đang xử lý.
 - Hỗ trợ chuyển giao từ AI sang nhân viên thật mà không reset đoạn chat.
 - Hiển thị badge nguồn kênh Web, Facebook, hoặc Email.
+- Nhận phản hồi Web qua Supabase Realtime.
 
 ### 2. Web Admin Dashboard: super_admin
 
@@ -176,8 +309,8 @@ Admin dashboard đầy đủ được sử dụng bởi chủ shop và quản l�
 - Đăng nhập bằng email/password qua Supabase Auth.
 - Xem và reply tất cả tin nhắn từ Web, Facebook, và Email trong Unified Inbox.
 - Lọc Inbox theo kênh và trạng thái ticket: Open, In Progress, Resolved.
-- Upload file PDF hoặc Word để tạo knowledge base cho AI.
-- Xem thống kê dashboard như số tin nhắn, tỉ lệ AI tự xử lý, và thời gian phản hồi trung bình.
+- Upload file PDF, DOCX, hoặc TXT tối đa 10 MB để tạo knowledge base cho AI.
+- Xem thống kê dashboard như số tin nhắn hôm nay, tỉ lệ AI tự xử lý, thời gian phản hồi trung bình, ticket đang mở, biểu đồ 7 ngày, và top câu hỏi.
 - Quản lý tài khoản nhân viên CSKH.
 - Cấu hình Facebook webhook và địa chỉ email nhận tin.
 
@@ -207,25 +340,51 @@ Mobile app được sử dụng bởi nhân viên CSKH.
 
 AI Core là lớp tự động hóa của hệ thống.
 
-- Phân loại ý định của khách hàng: hỏi thông tin, khiếu nại, hoặc spam.
+- Phân loại ý định của khách hàng: question, complaint, hoặc spam.
 - Trả lời câu hỏi bằng RAG dựa trên tài liệu đã upload.
 - Tạo ticket khi phát hiện khiếu nại hoặc tin nhắn khẩn cấp.
+- Tạo ticket khi RAG không tìm được context phù hợp vượt ngưỡng.
 - Gửi push notification cho ticket khẩn cấp.
 - Nhận webhook từ Facebook Messenger và email.
 - Đồng bộ realtime giữa Web Admin và Mobile App.
+
+## Mô hình dữ liệu
+
+| Bảng | Mục đích | Trường chính |
+| --- | --- | --- |
+| `users` | Tài khoản nội bộ và RBAC. | `id`, `email`, `full_name`, `role`, `status`, `avatar_url`, `last_seen_at` |
+| `tickets` | Ca hội thoại cần theo dõi. | `id`, `customer_id`, `customer_name`, `source`, `status`, `intent`, `summary`, `assigned_to`, `resolved_at` |
+| `messages` | Lịch sử chat của từng ticket. | `id`, `ticket_id`, `sender_type`, `sender_id`, `content`, `created_at` |
+| `documents` | File knowledge base đã upload. | `id`, `name`, `file_url`, `file_type`, `embedding_status`, `chunk_count`, `uploaded_by` |
+| `channels` | Cấu hình Web, Facebook, và Email. | `id`, `type`, `config`, `is_active`, `connected_at` |
+| `notifications` | Thông báo push/browser được lưu. | `id`, `ticket_id`, `recipient_id`, `title`, `body`, `is_read`, `sent_at` |
+
+### Enum
+
+| Trường | Giá trị |
+| --- | --- |
+| `users.role` | `super_admin`, `agent` |
+| `users.status` | `online`, `offline`, `disabled` |
+| `tickets.source` / `channels.type` | `web`, `facebook`, `email` |
+| `tickets.status` | `open`, `in_progress`, `pending`, `resolved` |
+| `tickets.intent` | `question`, `complaint`, `spam` |
+| `messages.sender_type` | `customer`, `bot`, `human` |
+| `documents.file_type` | `pdf`, `docx`, `txt` |
+| `documents.embedding_status` | `processing`, `ready`, `error` |
 
 ## Công nghệ sử dụng
 
 | Lớp | Công nghệ |
 | --- | --- |
 | AI Agent | LangChain + Gemini API hoặc OpenAI GPT |
-| Vector Database | ChromaDB hoặc Pinecone |
+| Vector Database | ChromaDB |
 | Backend API | FastAPI |
 | Database và Auth | Supabase: PostgreSQL, Realtime, Auth |
 | Web Frontend | Next.js + Tailwind CSS |
 | Mobile App | Flutter |
-| Tích hợp Email | Mailgun hoặc SendGrid Webhook |
+| Tích hợp Email | Mailgun hoặc SendGrid Webhook/API |
 | Tích hợp Facebook | Meta Messenger Platform API Webhook |
+| Push Notification | Firebase Cloud Messaging |
 | Hosting | Railway hoặc Render cho backend, Vercel cho web |
 
 ## Lộ trình thực hiện
@@ -246,14 +405,15 @@ AI Core là lớp tự động hóa của hệ thống.
 - [ ] Hiển thị typing indicator khi AI đang xử lý.
 - [ ] Hỗ trợ handoff từ AI sang nhân viên mà không reset lịch sử chat.
 - [ ] Hiển thị badge nguồn kênh Web, Facebook, hoặc Email.
+- [ ] Hiển thị fallback bận/lỗi khi hệ thống không lưu được message.
 
 ### Web Admin Dashboard: super_admin
 
 - [ ] Đăng nhập bằng email/password qua Supabase Auth.
 - [ ] Xem và reply tất cả tin nhắn từ Web, Facebook, và Email trong Unified Inbox.
 - [ ] Lọc Inbox theo kênh và trạng thái ticket: Open, In Progress, Resolved.
-- [ ] Hiển thị dashboard thống kê: tổng tin nhắn, tỉ lệ AI xử lý, thời gian phản hồi trung bình.
-- [ ] Upload PDF/Word cho Knowledge Base AI và xem danh sách tài liệu đã upload.
+- [ ] Hiển thị dashboard thống kê: tổng tin nhắn hôm nay, tỉ lệ AI xử lý, thời gian phản hồi trung bình, ticket đang mở, xu hướng 7 ngày, và top 5 câu hỏi.
+- [ ] Upload PDF, DOCX, hoặc TXT cho Knowledge Base AI và xem trạng thái xử lý.
 - [ ] Tạo/xóa tài khoản agent và phân quyền role.
 - [ ] Cấu hình Facebook webhook và địa chỉ email nhận tin.
 
@@ -274,21 +434,26 @@ AI Core là lớp tự động hóa của hệ thống.
 - [ ] Hiển thị đầy đủ ngữ cảnh chat của khách hàng.
 - [ ] Đóng ticket sau khi xử lý.
 - [ ] Hiển thị thống kê đơn giản cho super_admin.
+- [ ] Mở đúng ticket khi người dùng bấm vào push notification.
 
 ### AI Core
 
-- [ ] Phân loại intent của tin nhắn: hỏi thông tin, khiếu nại, hoặc spam.
-- [ ] Trả lời câu hỏi thường gặp bằng RAG.
-- [ ] Tạo ticket và gửi push notification khi phát hiện khiếu nại.
+- [ ] Phân loại intent của tin nhắn: question, complaint, hoặc spam.
+- [ ] Trả lời câu hỏi thường gặp bằng RAG với top-3 chunk từ ChromaDB.
+- [ ] Tạo ticket và gửi push notification khi phát hiện khiếu nại hoặc RAG thất bại.
 - [ ] Nhận webhook từ Facebook Messenger và email.
 - [ ] Đồng bộ realtime toàn bộ hệ thống qua Supabase Realtime.
+- [ ] Bỏ qua spam sau khi phân loại.
+- [ ] Mặc định xử lý như `question` và tiếp tục RAG khi LLM classifier timeout.
 
 ## Yêu cầu phi chức năng
 
 - Performance: AI nên phản hồi câu hỏi thông thường trong dưới 5 giây.
 - Availability: Hệ thống nên hỗ trợ tự động hóa CSKH 24/7.
 - Scalability: Kiến trúc nên cho phép thêm các kênh mới như Zalo hoặc WhatsApp trong tương lai.
-- Security: Token xác thực phải được bảo vệ, và dữ liệu chat không nên lưu dưới dạng plain text.
+- Security: Token xác thực và API key của các kênh phải được bảo vệ, quyền theo role phải được kiểm tra ở server-side.
+- Reliability: Realtime client cần hiển thị cảnh báo và tự retry khi mất kết nối.
+- Agent presence: Agent tự chuyển offline sau 30 giây không có heartbeat.
 
 ## Demo cuối kỳ dự kiến
 
@@ -302,9 +467,32 @@ Dự án cuối cùng nên thể hiện đầy đủ luồng xử lý sau:
 6. Nhân viên nhận thông báo trên mobile.
 7. Nhân viên xem ngữ cảnh chat và xử lý ticket.
 
+## Giới hạn hiện tại
+
+- Demo local dùng auth/session mock và dữ liệu in-memory hoặc browser local khi chưa cấu hình Supabase thật.
+- Widget demo trên Web có thể dùng response mock ổn định trong browser; các lệnh curl trong `docs/local-demo.md` kiểm thử API và AI service local thật.
+- Facebook, Email, FCM, Supabase Auth, và ChromaDB hosted cần cấu hình provider trước khi chạy production.
+- Channel settings và staff invite đang là boundary UI/API an toàn không trả secret ra client, nhưng lưu credential thật và gửi invite thật vẫn cần wiring production.
+- Rate limiting khi deploy nhiều instance nên chuyển từ in-memory sang Redis, API gateway, hoặc edge provider.
+- Không commit screenshot vì screenshot chỉ nên được tạo từ app đang chạy ngay trước lúc thuyết trình hoặc nộp bài.
+
+## Lệnh kiểm thử
+
+Chạy bộ kiểm thử cuối:
+
+```sh
+cd services/api && .venv/bin/python -m pytest
+cd services/ai && .venv/bin/python -m pytest
+cd apps/web-admin && ./node_modules/.bin/next lint
+cd apps/web-admin && ./node_modules/.bin/vitest run
+cd apps/web-admin && ./node_modules/.bin/next build
+cd apps/mobile && flutter analyze
+cd apps/mobile && flutter test
+```
+
 ## Thông tin repository
 
 | Mục | Thông tin |
 | --- | --- |
-| Cập nhật lần cuối | 2026-08-04 |
+| Cập nhật lần cuối | 2026-08-08 |
 | Repository | `[GitHub repository link]` |
