@@ -12,6 +12,11 @@ $logsRoot = Join-Path $runtimeRoot "logs"
 $statePath = Join-Path $runtimeRoot "processes.json"
 $startedProcesses = [System.Collections.Generic.List[object]]::new()
 
+# Pick up tools installed after the parent terminal or editor was opened.
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$env:Path = @($machinePath, $userPath) -join ";"
+
 function Write-Step {
     param([string]$Message)
     Write-Host "`n==> $Message" -ForegroundColor Cyan
@@ -35,13 +40,20 @@ function Invoke-Checked {
     )
 
     Push-Location $WorkingDirectory
+    $savedErrorPreference = $ErrorActionPreference
     try {
-        & $Executable @Arguments | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "Command failed with exit code ${LASTEXITCODE}: $Executable $($Arguments -join ' ')"
+        # Native tools often write progress or warnings to stderr. Judge success
+        # by their exit code instead of turning those messages into exceptions.
+        $ErrorActionPreference = "Continue"
+        & $Executable @Arguments 2>&1 | Out-Host
+        $nativeExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $savedErrorPreference
+        if ($nativeExitCode -ne 0) {
+            throw "Command failed with exit code ${nativeExitCode}: $Executable $($Arguments -join ' ')"
         }
     }
     finally {
+        $ErrorActionPreference = $savedErrorPreference
         Pop-Location
     }
 }
@@ -55,16 +67,20 @@ function Ensure-PythonService {
     $venvPython = Join-Path $ServiceDirectory ".venv\Scripts\python.exe"
     if (-not (Test-Path -LiteralPath $venvPython)) {
         if ($SkipInstall) {
-            throw "Missing Python environment in $ServiceDirectory. Run start.ps1 without -SkipInstall first."
+            throw "Missing Python environment in $ServiceDirectory. Run start.cmd without -SkipInstall first."
         }
         Write-Step "Creating Python environment for $ServiceDirectory"
         Invoke-Checked -Executable $script:systemPython -Arguments @("-m", "venv", ".venv") -WorkingDirectory $ServiceDirectory
     }
 
+    $savedErrorPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $venvPython -c $ImportCheck 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $importExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $savedErrorPreference
+    if ($importExitCode -ne 0) {
         if ($SkipInstall) {
-            throw "Python dependencies are missing in $ServiceDirectory. Run start.ps1 without -SkipInstall first."
+            throw "Python dependencies are missing in $ServiceDirectory. Run start.cmd without -SkipInstall first."
         }
         Write-Step "Installing Python dependencies for $ServiceDirectory"
         Invoke-Checked -Executable $venvPython -Arguments @("-m", "pip", "install", "-r", "requirements.txt") -WorkingDirectory $ServiceDirectory
@@ -196,7 +212,7 @@ try {
     $nextCli = Join-Path $webDirectory "node_modules\next\dist\bin\next"
     if (-not (Test-Path -LiteralPath $nextCli)) {
         if ($SkipInstall) {
-            throw "Web dependencies are missing. Run start.ps1 without -SkipInstall first."
+            throw "Web dependencies are missing. Run start.cmd without -SkipInstall first."
         }
         Write-Step "Installing web dependencies"
         Invoke-Checked -Executable $pnpmCommand.Source -Arguments @("install", "--frozen-lockfile") -WorkingDirectory $webDirectory
@@ -258,10 +274,11 @@ try {
     }
 }
 catch {
+    $failure = $_
     Stop-StartedProcesses
     if (Test-Path -LiteralPath $statePath) {
         Remove-Item -LiteralPath $statePath -Force
     }
-    Write-Error $_
+    Write-Error -ErrorRecord $failure
     exit 1
 }

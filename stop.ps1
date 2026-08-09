@@ -39,15 +39,36 @@ foreach ($record in @($state.processes)) {
         else {
             $record.startedAtUtc
         }
-        $recordedStart = [DateTime]::Parse($recordedTimestamp).ToUniversalTime()
-        $actualStart = $process.StartTime.ToUniversalTime()
+        try {
+            $recordedStart = [DateTime]::Parse($recordedTimestamp).ToUniversalTime()
+            $actualStartValue = $process.StartTime
+            if (-not $actualStartValue) {
+                # The process finished naturally after Get-Process returned it.
+                continue
+            }
+            $actualStart = $actualStartValue.ToUniversalTime()
+        }
+        catch {
+            if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+                continue
+            }
+            throw
+        }
         if ([Math]::Abs(($actualStart - $recordedStart).TotalSeconds) -gt 10) {
             Write-Warning "Skipped PID $processId because its start time does not match the recorded $($record.name) process."
             $skipped++
             continue
         }
 
-        Stop-Process -Id $processId -ErrorAction Stop
+        try {
+            Stop-Process -Id $processId -ErrorAction Stop
+        }
+        catch {
+            if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+                continue
+            }
+            throw
+        }
         Write-Host "Stopped $($record.name) (PID $processId)."
         $stopped++
     }
