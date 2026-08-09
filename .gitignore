@@ -40,6 +40,7 @@ build/
 chroma/
 *.sqlite
 *.db
+.smart-helpdesk/
 
 # Supabase local artifacts
 .supabase/

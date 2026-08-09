@@ -2,6 +2,8 @@
 
 Smart Helpdesk is a SaaS platform that helps small and medium online businesses automate customer support with an AI Agent, Retrieval-Augmented Generation (RAG), and a simple ticketing workflow. The system can answer common customer questions automatically, classify message intent, and escalate urgent complaints to human staff through a mobile app.
 
+> **Running the project on Windows?** See the beginner-friendly [`STARTUP_GUIDE.md`](STARTUP_GUIDE.md) for one-command startup and shutdown instructions.
+
 > Tagline: "Tự động hóa CSKH. Xử lý khiếu nại tức thì."
 
 ## Team Information
@@ -44,6 +46,26 @@ The project is designed to run locally without real Supabase, Facebook, Email, F
 ## Local Demo Quick Start
 
 Detailed steps are in [`docs/local-demo.md`](docs/local-demo.md). The short version is:
+
+### One-command Windows launcher
+
+From PowerShell at the repository root:
+
+```powershell
+.\start.cmd
+```
+
+The first run creates the Python virtual environments, installs dependencies, starts the AI service, API, and Web Admin, and loads the sample knowledge base. Open `http://127.0.0.1:3000/login`, or use `.\start.cmd -OpenBrowser` to open it automatically. The `.cmd` wrapper works even when Windows blocks direct PowerShell script execution.
+
+Stop only the processes launched by the script with:
+
+```powershell
+.\stop.cmd
+```
+
+Use `.\start.cmd -SkipInstall` on later runs when dependencies are already installed. The Flutter mobile app remains optional and is started separately because it requires a selected device or emulator.
+
+### Manual startup
 
 1. Start AI service:
 
