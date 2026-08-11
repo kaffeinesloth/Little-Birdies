@@ -24,9 +24,9 @@ class _SmartHelpdeskMobileAppState extends State<SmartHelpdeskMobileApp> {
   final _push = PushNotificationService();
   AuthSession? _session;
 
-  Future<void> _signIn(String email, String password, UserRole role) async {
-    final session =
-        await _auth.signIn(email: email, password: password, role: role);
+  Future<void> _signIn(String email, String password) async {
+    final session = await _auth.signIn(
+        email: email, password: password, role: UserRole.agent);
     setState(() => _session = session);
   }
 
@@ -64,8 +64,7 @@ class LoginScreen extends StatefulWidget {
   const LoginScreen(
       {super.key, required this.onSignIn, required this.mockMode});
 
-  final Future<void> Function(String email, String password, UserRole role)
-      onSignIn;
+  final Future<void> Function(String email, String password) onSignIn;
   final bool mockMode;
 
   @override
@@ -73,9 +72,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController(text: 'owner@example.com');
+  final _emailController = TextEditingController(text: 'agent@example.com');
   final _passwordController = TextEditingController(text: 'password');
-  UserRole _role = UserRole.superAdmin;
   bool _loading = false;
   String? _error;
 
@@ -92,8 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await widget.onSignIn(
-          _emailController.text, _passwordController.text, _role);
+      await widget.onSignIn(_emailController.text, _passwordController.text);
     } on AuthException catch (error) {
       setState(() => _error = error.message);
     } finally {
@@ -135,7 +132,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Supabase Auth-compatible local mock login',
+                        'Employee support app',
                         style: Theme.of(context)
                             .textTheme
                             .bodyMedium
@@ -146,7 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       Center(
                         child: StatusChip(
                             label: widget.mockMode
-                                ? 'local mock mode'
+                                ? 'local demo auth'
                                 : 'supabase env configured'),
                       ),
                       const SizedBox(height: 24),
@@ -163,19 +160,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             labelText: 'Password',
                             border: OutlineInputBorder()),
                         obscureText: true,
-                      ),
-                      const SizedBox(height: 12),
-                      SegmentedButton<UserRole>(
-                        segments: const [
-                          ButtonSegment(
-                              value: UserRole.superAdmin,
-                              label: Text('super_admin')),
-                          ButtonSegment(
-                              value: UserRole.agent, label: Text('agent')),
-                        ],
-                        selected: {_role},
-                        onSelectionChanged: (value) =>
-                            setState(() => _role = value.first),
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 12),
@@ -229,7 +213,6 @@ class _MainShellState extends State<MainShell> {
   int _index = 0;
   PresenceStatus _presence = PresenceStatus.online;
   Timer? _heartbeatTimer;
-  final List<NotificationItem> _notifications = List.of(MockData.notifications);
 
   @override
   void initState() {
@@ -263,15 +246,12 @@ class _MainShellState extends State<MainShell> {
   }
 
   List<_Destination> get _destinations {
-    final base = <_Destination>[
-      const _Destination('Inbox', Icons.inbox),
-      const _Destination('Notifications', Icons.notifications),
+    return const <_Destination>[
+      _Destination('Assigned', Icons.assignment_ind),
+      _Destination('Urgent', Icons.notification_important),
+      _Destination('Resolved', Icons.check_circle),
+      _Destination('Profile', Icons.person),
     ];
-    if (widget.session.user.role == UserRole.superAdmin) {
-      base.add(const _Destination('Dashboard', Icons.bar_chart));
-    }
-    base.add(const _Destination('Profile', Icons.person));
-    return base;
   }
 
   Future<void> _setPresence(bool online) async {
@@ -287,18 +267,22 @@ class _MainShellState extends State<MainShell> {
     final destinations = _destinations;
     final selected = destinations[_index.clamp(0, destinations.length - 1)];
     final body = switch (selected.label) {
-      'Inbox' => InboxScreen(api: widget.api, session: widget.session),
-      'Notifications' => NotificationsScreen(
+      'Assigned' => InboxScreen(
           api: widget.api,
           session: widget.session,
-          notifications: _notifications,
-          onCreateMockNotification: () {
-            setState(() {
-              _notifications.insert(
-                  0, widget.push.mockUrgentTicketNotification());
-            });
-          }),
-      'Dashboard' => DashboardScreen(api: widget.api, session: widget.session),
+          emptyText: 'No assigned tickets right now.',
+          include: (ticket) => ticket.status != TicketStatus.resolved,
+        ),
+      'Urgent' => NotificationsScreen(
+          api: widget.api,
+          session: widget.session,
+        ),
+      'Resolved' => InboxScreen(
+          api: widget.api,
+          session: widget.session,
+          emptyText: 'No resolved tickets yet.',
+          include: (ticket) => ticket.status == TicketStatus.resolved,
+        ),
       _ => ProfileScreen(session: widget.session, onSignOut: widget.onSignOut),
     };
 
@@ -340,17 +324,28 @@ class _Destination {
 }
 
 class InboxScreen extends StatelessWidget {
-  const InboxScreen({super.key, required this.api, required this.session});
+  const InboxScreen({
+    super.key,
+    required this.api,
+    required this.session,
+    required this.emptyText,
+    required this.include,
+  });
 
   final SmartHelpdeskApiClient api;
   final AuthSession session;
+  final String emptyText;
+  final bool Function(Ticket ticket) include;
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<Ticket>>(
       future: api.fetchTickets(accessToken: session.accessToken),
       builder: (context, snapshot) {
-        final tickets = snapshot.data ?? MockData.tickets;
+        final tickets = (snapshot.data ?? <Ticket>[]).where(include).toList();
+        if (tickets.isEmpty) {
+          return Center(child: Text(emptyText));
+        }
         return ListView.separated(
           padding: const EdgeInsets.all(12),
           itemBuilder: (context, index) {
@@ -635,14 +630,10 @@ class NotificationsScreen extends StatelessWidget {
     super.key,
     required this.api,
     required this.session,
-    required this.notifications,
-    required this.onCreateMockNotification,
   });
 
   final SmartHelpdeskApiClient api;
   final AuthSession session;
-  final List<NotificationItem> notifications;
-  final VoidCallback onCreateMockNotification;
 
   Future<void> _openTicket(
       BuildContext context, NotificationItem notification) async {
@@ -674,131 +665,40 @@ class NotificationsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        MaterialBanner(
-          leading: const Icon(Icons.cloud_queue),
-          content: const Text(
-              'FCM is configured through compile-time env placeholders. Local mock notifications are available for development.'),
-          actions: [
-            TextButton.icon(
-              onPressed: onCreateMockNotification,
-              icon: const Icon(Icons.add_alert),
-              label: const Text('Mock notification'),
-            ),
-          ],
-        ),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: notifications.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final notification = notifications[index];
-              return Card(
-                elevation: 0,
-                child: ListTile(
-                  onTap: notification.ticketId == null
-                      ? null
-                      : () => _openTicket(context, notification),
-                  leading: Icon(notification.isRead
-                      ? Icons.notifications_none
-                      : Icons.notification_important),
-                  title: Text(notification.title),
-                  subtitle: Text(
-                      '${notification.body}\n${_timeAgo(notification.createdAt)}'),
-                  isThreeLine: true,
-                  trailing: notification.isRead
-                      ? const Icon(Icons.chevron_right)
-                      : const StatusChip(label: 'new'),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({super.key, required this.api, required this.session});
-
-  final SmartHelpdeskApiClient api;
-  final AuthSession session;
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<DashboardSummary>(
-      future: api.fetchDashboard(accessToken: session.accessToken),
+    return FutureBuilder<List<NotificationItem>>(
+      future: api.fetchNotifications(accessToken: session.accessToken),
       builder: (context, snapshot) {
-        final summary = snapshot.data ?? MockData.dashboard;
-        return GridView.count(
+        final notifications = snapshot.data ?? <NotificationItem>[];
+        if (notifications.isEmpty) {
+          return const Center(child: Text('No urgent tickets right now.'));
+        }
+        return ListView.separated(
           padding: const EdgeInsets.all(12),
-          crossAxisCount: MediaQuery.sizeOf(context).width > 520 ? 2 : 1,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          childAspectRatio: 2.6,
-          children: [
-            MetricCard(
-                label: 'Messages today',
-                value: '${summary.messagesToday}',
-                icon: Icons.message),
-            MetricCard(
-                label: 'AI handling rate',
-                value: '${summary.aiHandlingRate}%',
-                icon: Icons.smart_toy),
-            MetricCard(
-                label: 'Open tickets',
-                value: '${summary.openTickets}',
-                icon: Icons.inbox),
-            MetricCard(
-                label: 'Avg response',
-                value: '${summary.averageResponseSeconds}s',
-                icon: Icons.timer),
-          ],
+          itemCount: notifications.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (context, index) {
+            final notification = notifications[index];
+            return Card(
+              elevation: 0,
+              child: ListTile(
+                onTap: notification.ticketId == null
+                    ? null
+                    : () => _openTicket(context, notification),
+                leading: Icon(notification.isRead
+                    ? Icons.notifications_none
+                    : Icons.notification_important),
+                title: Text(notification.title),
+                subtitle: Text(
+                    '${notification.body}\n${_timeAgo(notification.createdAt)}'),
+                isThreeLine: true,
+                trailing: notification.isRead
+                    ? const Icon(Icons.chevron_right)
+                    : const StatusChip(label: 'new'),
+              ),
+            );
+          },
         );
       },
-    );
-  }
-}
-
-class MetricCard extends StatelessWidget {
-  const MetricCard(
-      {super.key,
-      required this.label,
-      required this.value,
-      required this.icon});
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(label, style: Theme.of(context).textTheme.labelLarge),
-                Text(value,
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w700)),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -829,9 +729,9 @@ class ProfileScreen extends StatelessWidget {
           elevation: 0,
           child: ListTile(
             leading: const Icon(Icons.security),
-            title: const Text('Supabase Auth placeholder'),
+            title: const Text('Authentication'),
             subtitle: const Text(
-                'Replace the local mock service with Supabase Auth when credentials are configured.'),
+                'Local demo auth is enabled until Supabase Auth is connected.'),
           ),
         ),
         const SizedBox(height: 8),

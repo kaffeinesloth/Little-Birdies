@@ -22,48 +22,31 @@ class SmartHelpdeskApiClient {
           .map((item) => _ticketFromJson(item as Map<String, dynamic>))
           .toList();
     } catch (_) {
-      return MockData.tickets;
+      return <Ticket>[];
     }
   }
 
   Future<Message> sendReply(String ticketId, String content,
       {String? accessToken}) async {
-    try {
-      final response = await _post(
-        '/tickets/$ticketId/messages',
-        jsonEncode({'content': content}),
-        accessToken,
-      );
-      final payload = jsonDecode(response) as Map<String, dynamic>;
-      return _messageFromJson(payload['message'] as Map<String, dynamic>);
-    } catch (_) {
-      return Message(
-        id: 'mock-human-${DateTime.now().millisecondsSinceEpoch}',
-        senderType: 'human',
-        content: content,
-        createdAt: DateTime.now(),
-      );
-    }
+    final response = await _post(
+      '/tickets/$ticketId/messages',
+      jsonEncode({'content': content}),
+      accessToken,
+    );
+    final payload = jsonDecode(response) as Map<String, dynamic>;
+    return _messageFromJson(payload['message'] as Map<String, dynamic>);
   }
 
   Future<Ticket> resolveTicket(Ticket ticket, {String? accessToken}) async {
-    try {
-      final response =
-          await _post('/tickets/${ticket.id}/resolve', '{}', accessToken);
-      return _ticketFromJson(jsonDecode(response) as Map<String, dynamic>);
-    } catch (_) {
-      return ticket.copyWith(status: TicketStatus.resolved);
-    }
+    final response =
+        await _post('/tickets/${ticket.id}/resolve', '{}', accessToken);
+    return _ticketFromJson(jsonDecode(response) as Map<String, dynamic>);
   }
 
   Future<Ticket> reopenTicket(Ticket ticket, {String? accessToken}) async {
-    try {
-      final response =
-          await _post('/tickets/${ticket.id}/reopen', '{}', accessToken);
-      return _ticketFromJson(jsonDecode(response) as Map<String, dynamic>);
-    } catch (_) {
-      return ticket.copyWith(status: TicketStatus.open);
-    }
+    final response =
+        await _post('/tickets/${ticket.id}/reopen', '{}', accessToken);
+    return _ticketFromJson(jsonDecode(response) as Map<String, dynamic>);
   }
 
   Future<List<Message>> fetchMessages(String ticketId,
@@ -75,7 +58,20 @@ class SmartHelpdeskApiClient {
           .map((item) => _messageFromJson(item as Map<String, dynamic>))
           .toList();
     } catch (_) {
-      return MockData.messages[ticketId] ?? <Message>[];
+      return <Message>[];
+    }
+  }
+
+  Future<List<NotificationItem>> fetchNotifications(
+      {String? accessToken}) async {
+    try {
+      final response = await _get('/notifications', accessToken);
+      final payload = jsonDecode(response) as Map<String, dynamic>;
+      return (payload['items'] as List<dynamic>? ?? <dynamic>[])
+          .map((item) => _notificationFromJson(item as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return <NotificationItem>[];
     }
   }
 
@@ -110,15 +106,6 @@ class SmartHelpdeskApiClient {
       );
     } catch (_) {
       return;
-    }
-  }
-
-  Future<DashboardSummary> fetchDashboard({String? accessToken}) async {
-    try {
-      await _get('/dashboard', accessToken);
-      return MockData.dashboard;
-    } catch (_) {
-      return MockData.dashboard;
     }
   }
 
@@ -184,6 +171,19 @@ Message _messageFromJson(Map<String, dynamic> json) {
   );
 }
 
+NotificationItem _notificationFromJson(Map<String, dynamic> json) {
+  return NotificationItem(
+    id: json['id']?.toString() ?? '',
+    title: (json['title'] ?? '').toString(),
+    body: (json['body'] ?? '').toString(),
+    createdAt: DateTime.tryParse(
+            (json['created_at'] ?? json['createdAt'] ?? '').toString()) ??
+        DateTime.now(),
+    isRead: json['is_read'] == true || json['isRead'] == true,
+    ticketId: (json['ticket_id'] ?? json['ticketId'])?.toString(),
+  );
+}
+
 ChannelType _channel(String? value) {
   return switch (value) {
     'facebook' => ChannelType.facebook,
@@ -199,81 +199,4 @@ TicketStatus _ticketStatus(String? value) {
     'resolved' => TicketStatus.resolved,
     _ => TicketStatus.open,
   };
-}
-
-class MockData {
-  static final tickets = <Ticket>[
-    Ticket(
-      id: 'TCK-1024',
-      customerName: 'Linh Tran',
-      source: ChannelType.web,
-      status: TicketStatus.pending,
-      intent: 'complaint',
-      preview: 'Refund request after delayed delivery',
-      updatedAt: DateTime.now().subtract(const Duration(minutes: 2)),
-    ),
-    Ticket(
-      id: 'TCK-1023',
-      customerName: 'Minh Pham',
-      source: ChannelType.facebook,
-      status: TicketStatus.open,
-      intent: 'question',
-      preview: 'Asked about warranty period for headphones',
-      updatedAt: DateTime.now().subtract(const Duration(minutes: 8)),
-    ),
-    Ticket(
-      id: 'TCK-1022',
-      customerName: 'An Nguyen',
-      source: ChannelType.email,
-      status: TicketStatus.inProgress,
-      intent: 'question',
-      preview: 'Needs invoice copy for order #4821',
-      updatedAt: DateTime.now().subtract(const Duration(minutes: 18)),
-      assignedTo: 'agent-demo',
-    ),
-  ];
-
-  static final messages = <String, List<Message>>{
-    'TCK-1024': [
-      Message(
-        id: 'MSG-1',
-        senderType: 'customer',
-        content: 'I want a refund because my delivery is late.',
-        createdAt: DateTime.now().subtract(const Duration(minutes: 3)),
-      ),
-      Message(
-        id: 'MSG-2',
-        senderType: 'bot',
-        content:
-            'I am sorry about the delay. A staff member is reviewing this now.',
-        createdAt: DateTime.now().subtract(const Duration(minutes: 2)),
-      ),
-    ],
-  };
-
-  static final notifications = <NotificationItem>[
-    NotificationItem(
-      id: 'NTF-1',
-      title: 'Urgent complaint',
-      body: 'Linh Tran needs a refund review.',
-      createdAt: DateTime.now().subtract(const Duration(minutes: 2)),
-      isRead: false,
-      ticketId: 'TCK-1024',
-    ),
-    NotificationItem(
-      id: 'NTF-2',
-      title: 'New web ticket',
-      body: 'A customer asked about warranty terms.',
-      createdAt: DateTime.now().subtract(const Duration(minutes: 9)),
-      isRead: true,
-      ticketId: 'TCK-1023',
-    ),
-  ];
-
-  static const dashboard = DashboardSummary(
-    messagesToday: 186,
-    aiHandlingRate: 78,
-    openTickets: 14,
-    averageResponseSeconds: 4.2,
-  );
 }

@@ -16,8 +16,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     debug: bool = True
     local_mock_auth_enabled: bool = False
+    local_mock_db_enabled: bool = True
+    local_sqlite_db_path: str | None = None
     cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    max_request_body_bytes: int = 1_048_576
+    max_request_body_bytes: int = 10_485_760
+    max_document_upload_bytes: int = 10_485_760
     max_message_content_chars: int = 4_000
     public_endpoint_rate_limit: int = 60
     public_endpoint_rate_window_seconds: int = 60

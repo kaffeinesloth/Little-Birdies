@@ -91,17 +91,3 @@ class NotificationItem {
   final bool isRead;
   final String? ticketId;
 }
-
-class DashboardSummary {
-  const DashboardSummary({
-    required this.messagesToday,
-    required this.aiHandlingRate,
-    required this.openTickets,
-    required this.averageResponseSeconds,
-  });
-
-  final int messagesToday;
-  final int aiHandlingRate;
-  final int openTickets;
-  final double averageResponseSeconds;
-}

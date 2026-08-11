@@ -96,6 +96,16 @@ class AIProcessingResult:
 class AIProcessor(Protocol):
     def process_message(self, *, source: str, sender_id: str, content: str) -> AIProcessingResult: ...
 
+    def process_document(
+        self,
+        *,
+        document_id: str,
+        file_url: str,
+        file_type: str,
+        file_name: str | None = None,
+        file_size_bytes: int = 0,
+    ) -> AIDocumentProcessResult: ...
+
 
 class HTTPAIClient:
     def __init__(self, settings: Settings | None = None, timeout_seconds: float = 5.0) -> None:

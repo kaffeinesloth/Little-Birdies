@@ -38,6 +38,8 @@ build/
 
 # Local data stores
 chroma/
+backend/uploads/
+backend/data/
 *.sqlite
 *.db
 .smart-helpdesk/

@@ -6,7 +6,9 @@ from fastapi import Depends
 import httpx
 
 from app.core.config import Settings, get_settings
-from app.db.local_supabase import local_supabase
+from pathlib import Path
+
+from app.db.local_supabase import DEFAULT_DB_PATH, LocalSupabase
 from app.services.supabase_table import SupabaseClient
 
 
@@ -31,12 +33,23 @@ def get_supabase_config(settings: Settings | None = None) -> SupabaseConfig:
 
 
 def get_supabase_client(settings: Settings = Depends(get_settings)) -> SupabaseClient:
-    if settings.local_mock_auth_enabled and settings.app_env != "production":
-        return local_supabase
     config = get_supabase_config(settings)
+    if settings.local_mock_db_enabled and settings.app_env != "production":
+        return get_local_supabase(settings)
     if not config.is_configured:
         raise RuntimeError("Supabase client is not configured")
     return RestSupabaseClient(config)
+
+
+_local_clients: dict[Path, LocalSupabase] = {}
+
+
+def get_local_supabase(settings: Settings) -> LocalSupabase:
+    db_path = Path(settings.local_sqlite_db_path).expanduser() if settings.local_sqlite_db_path else DEFAULT_DB_PATH
+    db_path = db_path.resolve()
+    if db_path not in _local_clients:
+        _local_clients[db_path] = LocalSupabase(db_path)
+    return _local_clients[db_path]
 
 
 @dataclass

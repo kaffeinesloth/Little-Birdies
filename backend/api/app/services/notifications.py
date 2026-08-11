@@ -2,14 +2,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.schemas.notifications import NotificationCreate, NotificationUpdate
-from app.services.fcm import FCMSender, MockFCMSender
+from app.services.fcm import FCMSender, LocalFCMSender
 from app.services.supabase_table import SupabaseClient, TableService
 
 
 class NotificationService(TableService):
     def __init__(self, client: SupabaseClient, fcm_sender: FCMSender | None = None) -> None:
         super().__init__(client, "notifications")
-        self.fcm_sender = fcm_sender or MockFCMSender()
+        self.fcm_sender = fcm_sender or LocalFCMSender()
 
     def create_notification(self, payload: NotificationCreate) -> dict[str, Any]:
         return self.create(payload)

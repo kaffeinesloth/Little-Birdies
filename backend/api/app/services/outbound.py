@@ -36,21 +36,21 @@ class WebRealtimeSender:
         )
 
 
-class MockFacebookSender:
+class LocalFacebookSender:
     def send(self, ticket: dict[str, Any], message: dict[str, Any]) -> OutboundDeliveryResult:
         return OutboundDeliveryResult(
             channel=ChannelType.FACEBOOK,
             delivered=True,
-            provider_message_id=f"mock-facebook-{message['id']}",
+            provider_message_id=f"local-facebook-{message['id']}",
         )
 
 
-class MockEmailSender:
+class LocalEmailSender:
     def send(self, ticket: dict[str, Any], message: dict[str, Any]) -> OutboundDeliveryResult:
         return OutboundDeliveryResult(
             channel=ChannelType.EMAIL,
             delivered=True,
-            provider_message_id=f"mock-email-{message['id']}",
+            provider_message_id=f"local-email-{message['id']}",
         )
 
 
@@ -94,8 +94,8 @@ class OutboundRouter:
     def __init__(self, senders: dict[ChannelType, ChannelSender] | None = None) -> None:
         self.senders = senders or {
             ChannelType.WEB: WebRealtimeSender(),
-            ChannelType.FACEBOOK: MockFacebookSender(),
-            ChannelType.EMAIL: MockEmailSender(),
+            ChannelType.FACEBOOK: LocalFacebookSender(),
+            ChannelType.EMAIL: LocalEmailSender(),
         }
 
     def send_reply(
@@ -113,7 +113,7 @@ def build_default_senders(settings: Settings) -> dict[ChannelType, ChannelSender
     facebook_sender: ChannelSender = (
         FacebookMessengerSender(FacebookSendApiClient(settings))
         if settings.facebook_page_access_token
-        else MockFacebookSender()
+        else LocalFacebookSender()
     )
     email_sender: ChannelSender = (
         EmailReplySender(get_email_provider(settings))
@@ -125,7 +125,7 @@ def build_default_senders(settings: Settings) -> dict[ChannelType, ChannelSender
                 and settings.mailgun_domain
             )
         )
-        else MockEmailSender()
+        else LocalEmailSender()
     )
     return {
         ChannelType.WEB: WebRealtimeSender(),

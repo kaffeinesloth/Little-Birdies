@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'file_picker_stub.dart' if (dart.library.html) 'file_picker_web.dart';
+
 void main() {
   runApp(const SmartHelpdeskWebApp());
 }
@@ -17,15 +19,13 @@ class SmartHelpdeskWebApp extends StatefulWidget {
 class _SmartHelpdeskWebAppState extends State<SmartHelpdeskWebApp> {
   UserSession? _session;
 
-  void _signIn(UserRole role) {
+  void _signIn() {
     setState(() {
       _session = UserSession(
-        id: role == UserRole.superAdmin ? ownerDemoId : agentDemoId,
-        email: role == UserRole.superAdmin
-            ? 'owner@example.com'
-            : 'agent@example.com',
-        fullName: role == UserRole.superAdmin ? 'Shop Owner' : 'Support Agent',
-        role: role,
+        id: ownerDemoId,
+        email: 'owner@example.com',
+        fullName: 'Shop Owner',
+        role: UserRole.superAdmin,
       );
     });
   }
@@ -55,7 +55,7 @@ class _SmartHelpdeskWebAppState extends State<SmartHelpdeskWebApp> {
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.onSignIn});
 
-  final ValueChanged<UserRole> onSignIn;
+  final VoidCallback onSignIn;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -64,7 +64,6 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _email = TextEditingController(text: 'owner@example.com');
   final _password = TextEditingController(text: 'password');
-  UserRole _role = UserRole.superAdmin;
 
   @override
   void dispose() {
@@ -93,8 +92,11 @@ class _LoginPageState extends State<LoginPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.radio_button_checked,
-                        color: Color(0xff0f766e), size: 42),
+                    const Icon(
+                      Icons.radio_button_checked,
+                      color: Color(0xff0f766e),
+                      size: 42,
+                    ),
                     const SizedBox(height: 16),
                     Text(
                       'Smart Helpdesk',
@@ -106,12 +108,11 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Flutter web admin console',
+                      'Owner admin console',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(color: Colors.grey.shade700),
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.grey.shade700,
+                          ),
                     ),
                     const SizedBox(height: 24),
                     TextField(
@@ -130,28 +131,9 @@ class _LoginPageState extends State<LoginPage> {
                         border: OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    SegmentedButton<UserRole>(
-                      selected: {_role},
-                      onSelectionChanged: (value) {
-                        setState(() => _role = value.first);
-                      },
-                      segments: const [
-                        ButtonSegment(
-                          value: UserRole.superAdmin,
-                          icon: Icon(Icons.admin_panel_settings),
-                          label: Text('Owner'),
-                        ),
-                        ButtonSegment(
-                          value: UserRole.agent,
-                          icon: Icon(Icons.support_agent),
-                          label: Text('Agent'),
-                        ),
-                      ],
-                    ),
                     const SizedBox(height: 20),
                     FilledButton.icon(
-                      onPressed: () => widget.onSignIn(_role),
+                      onPressed: widget.onSignIn,
                       icon: const Icon(Icons.login),
                       label: const Text('Sign in'),
                     ),
@@ -167,11 +149,7 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 class AdminShell extends StatefulWidget {
-  const AdminShell({
-    super.key,
-    required this.session,
-    required this.onSignOut,
-  });
+  const AdminShell({super.key, required this.session, required this.onSignOut});
 
   final UserSession session;
   final VoidCallback onSignOut;
@@ -185,19 +163,13 @@ class _AdminShellState extends State<AdminShell> {
   int _selectedIndex = 0;
 
   List<NavItem> get _items {
-    final items = <NavItem>[
-      const NavItem('Inbox', Icons.inbox),
-      const NavItem('Dashboard', Icons.bar_chart),
+    return const <NavItem>[
+      NavItem('Inbox', Icons.inbox),
+      NavItem('Knowledge Base', Icons.menu_book),
+      NavItem('Team', Icons.groups),
+      NavItem('Settings', Icons.settings_input_component),
+      NavItem('Customer Chat', Icons.chat_bubble_outline),
     ];
-    if (widget.session.role == UserRole.superAdmin) {
-      items.addAll(const [
-        NavItem('Knowledge Base', Icons.menu_book),
-        NavItem('Staff', Icons.groups),
-        NavItem('Channels', Icons.settings_input_component),
-      ]);
-    }
-    items.add(const NavItem('Widget Demo', Icons.chat_bubble_outline));
-    return items;
   }
 
   @override
@@ -214,7 +186,9 @@ class _AdminShellState extends State<AdminShell> {
             return Column(
               children: [
                 _MobileTopBar(
-                    session: widget.session, onSignOut: widget.onSignOut),
+                  session: widget.session,
+                  onSignOut: widget.onSignOut,
+                ),
                 Expanded(child: content),
               ],
             );
@@ -252,11 +226,10 @@ class _AdminShellState extends State<AdminShell> {
 
   Widget _screenFor(String label) {
     return switch (label) {
-      'Dashboard' => const DashboardPage(),
-      'Knowledge Base' => const KnowledgeBasePage(),
-      'Staff' => const StaffPage(),
-      'Channels' => const ChannelsPage(),
-      'Widget Demo' => WidgetDemoPage(api: _api),
+      'Knowledge Base' => KnowledgeBasePage(api: _api, session: widget.session),
+      'Team' => StaffPage(api: _api, session: widget.session),
+      'Settings' => ChannelsPage(api: _api, session: widget.session),
+      'Customer Chat' => WidgetDemoPage(api: _api),
       _ => InboxPage(api: _api, session: widget.session),
     };
   }
@@ -291,9 +264,11 @@ class _SideNav extends StatelessWidget {
             height: 72,
             child: ListTile(
               leading: _BrandIcon(),
-              title: Text('Smart Helpdesk',
-                  style: TextStyle(fontWeight: FontWeight.w800)),
-              subtitle: Text('Admin Console'),
+              title: Text(
+                'Smart Helpdesk',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text('Owner Web Admin'),
             ),
           ),
           const Divider(height: 1),
@@ -321,8 +296,10 @@ class _SideNav extends StatelessWidget {
           ),
           const Divider(height: 1),
           ListTile(
-            title: Text(session.fullName,
-                style: const TextStyle(fontWeight: FontWeight.w700)),
+            title: Text(
+              session.fullName,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
             subtitle: Text(roleLabel(session.role)),
             trailing: IconButton(
               tooltip: 'Sign out',
@@ -358,8 +335,10 @@ class _MobileTopBar extends StatelessWidget {
             const _BrandIcon(),
             const SizedBox(width: 10),
             const Expanded(
-              child: Text('Smart Helpdesk',
-                  style: TextStyle(fontWeight: FontWeight.w800)),
+              child: Text(
+                'Smart Helpdesk',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
             ),
             Text(roleLabel(session.role)),
             IconButton(
@@ -388,7 +367,7 @@ class _InboxPageState extends State<InboxPage> {
   TicketStatus? _status;
   ChannelType? _channel;
   Ticket? _selected;
-  List<Ticket> _tickets = DemoData.tickets;
+  List<Ticket> _tickets = const <Ticket>[];
   bool _loading = true;
   String? _error;
 
@@ -407,15 +386,15 @@ class _InboxPageState extends State<InboxPage> {
       final tickets = await widget.api.fetchTickets(widget.session.accessToken);
       if (!mounted) return;
       setState(() {
-        _tickets = tickets.isEmpty ? DemoData.tickets : tickets;
+        _tickets = tickets;
         _selected = _tickets.isEmpty ? null : _tickets.first;
       });
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
         _error = error.message;
-        _tickets = DemoData.tickets;
-        _selected = DemoData.tickets.first;
+        _tickets = const <Ticket>[];
+        _selected = null;
       });
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -439,8 +418,8 @@ class _InboxPageState extends State<InboxPage> {
     }).toList();
 
     return PageScaffold(
-      title: 'Unified Inbox',
-      subtitle: 'Web, Facebook, and email conversations in one Flutter view.',
+      title: 'Inbox',
+      subtitle: 'Customer conversations that need owner or employee attention.',
       child: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 1000;
@@ -450,7 +429,7 @@ class _InboxPageState extends State<InboxPage> {
               if (_error != null) ...[
                 InlineNotice(
                   icon: Icons.cloud_off,
-                  text: 'Using local demo data. Backend said: $_error',
+                  text: 'Backend unavailable: $_error',
                 ),
                 const SizedBox(height: 12),
               ],
@@ -495,18 +474,24 @@ class _InboxPageState extends State<InboxPage> {
               Expanded(
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
-                    : ListView.separated(
-                        itemCount: tickets.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final ticket = tickets[index];
-                          return TicketCard(
-                            ticket: ticket,
-                            selected: _selected?.id == ticket.id,
-                            onTap: () => setState(() => _selected = ticket),
-                          );
-                        },
-                      ),
+                    : tickets.isEmpty
+                        ? const EmptyPanel(
+                            icon: Icons.inbox,
+                            title: 'No customer tickets yet',
+                          )
+                        : ListView.separated(
+                            itemCount: tickets.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final ticket = tickets[index];
+                              return TicketCard(
+                                ticket: ticket,
+                                selected: _selected?.id == ticket.id,
+                                onTap: () => setState(() => _selected = ticket),
+                              );
+                            },
+                          ),
               ),
             ],
           );
@@ -559,11 +544,15 @@ class TicketCard extends StatelessWidget {
         onTap: onTap,
         leading: CircleAvatar(
           backgroundColor: const Color(0xffe2e8f0),
-          child:
-              Icon(channelIcon(ticket.source), color: const Color(0xff334155)),
+          child: Icon(
+            channelIcon(ticket.source),
+            color: const Color(0xff334155),
+          ),
         ),
-        title: Text(ticket.customerName,
-            style: const TextStyle(fontWeight: FontWeight.w800)),
+        title: Text(
+          ticket.customerName,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Column(
@@ -579,8 +568,11 @@ class TicketCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              Text(ticket.summary,
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
+              Text(
+                ticket.summary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
             ],
           ),
         ),
@@ -675,16 +667,13 @@ class _TicketDetailBodyState extends State<TicketDetailBody> {
       );
       if (!mounted) return;
       setState(() {
-        _messages = messages.isEmpty
-            ? DemoData.messages[widget.ticket.id] ?? const <MessageItem>[]
-            : messages;
+        _messages = messages;
       });
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
         _error = error.message;
-        _messages =
-            DemoData.messages[widget.ticket.id] ?? const <MessageItem>[];
+        _messages = const <MessageItem>[];
       });
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -749,11 +738,12 @@ class _TicketDetailBodyState extends State<TicketDetailBody> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(widget.ticket.customerName,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    Text(
+                      widget.ticket.customerName,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
                     Text('${widget.ticket.id} · ${widget.ticket.summary}'),
                   ],
                 ),
@@ -776,41 +766,46 @@ class _TicketDetailBodyState extends State<TicketDetailBody> {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.separated(
-                    itemCount: _messages.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final message = _messages[index];
-                      final human = message.senderType == 'human';
-                      return Align(
-                        alignment: human
-                            ? Alignment.centerRight
-                            : Alignment.centerLeft,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 560),
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: human
-                                  ? const Color(0xff0f766e)
-                                  : const Color(0xfff1f5f9),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Text(
-                                message.content,
-                                style: TextStyle(
+                : _messages.isEmpty
+                    ? const EmptyPanel(
+                        icon: Icons.chat_bubble_outline,
+                        title: 'No messages yet',
+                      )
+                    : ListView.separated(
+                        itemCount: _messages.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final message = _messages[index];
+                          final human = message.senderType == 'human';
+                          return Align(
+                            alignment: human
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 560),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
                                   color: human
-                                      ? Colors.white
-                                      : const Color(0xff0f172a),
+                                      ? const Color(0xff0f766e)
+                                      : const Color(0xfff1f5f9),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Text(
+                                    message.content,
+                                    style: TextStyle(
+                                      color: human
+                                          ? Colors.white
+                                          : const Color(0xff0f172a),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                          );
+                        },
+                      ),
           ),
           const SizedBox(height: 14),
           Row(
@@ -843,206 +838,349 @@ class _TicketDetailBodyState extends State<TicketDetailBody> {
   }
 }
 
-class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key});
+class KnowledgeBasePage extends StatefulWidget {
+  const KnowledgeBasePage({
+    super.key,
+    required this.api,
+    required this.session,
+  });
+
+  final SmartHelpdeskWebApiClient api;
+  final UserSession session;
 
   @override
-  Widget build(BuildContext context) {
-    return PageScaffold(
-      title: 'Dashboard',
-      subtitle: 'Operational metrics for AI-assisted support.',
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            GridView.count(
-              crossAxisCount: MediaQuery.sizeOf(context).width >= 1100 ? 4 : 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: 2.5,
-              children: const [
-                MetricCard(
-                    label: 'Messages today', value: '186', delta: '+12%'),
-                MetricCard(label: 'AI handled', value: '78%', delta: '+6%'),
-                MetricCard(label: 'Avg response', value: '4.2s', delta: '-31%'),
-                MetricCard(label: 'Open tickets', value: '14', delta: '+3'),
-              ],
-            ),
-            const SizedBox(height: 16),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 900;
-                final trend = SurfacePanel(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const PanelTitle('Seven-day message trend'),
-                      const SizedBox(height: 18),
-                      SizedBox(
-                        height: 220,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            for (final point in DemoData.trend)
-                              Expanded(
-                                child: Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 5),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      Expanded(
-                                        child: Align(
-                                          alignment: Alignment.bottomCenter,
-                                          child: FractionallySizedBox(
-                                            heightFactor: point.count / 100,
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                color: const Color(0xff0f766e),
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(point.day),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-                final questions = SurfacePanel(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const PanelTitle('Top questions'),
-                      const SizedBox(height: 10),
-                      for (final item in DemoData.topQuestions)
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(item.question),
-                          trailing: Text('${item.count}'),
-                        ),
-                    ],
-                  ),
-                );
-                if (!wide) {
-                  return Column(
-                      children: [trend, const SizedBox(height: 16), questions]);
-                }
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 3, child: trend),
-                    const SizedBox(width: 16),
-                    Expanded(flex: 2, child: questions),
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  State<KnowledgeBasePage> createState() => _KnowledgeBasePageState();
 }
 
-class KnowledgeBasePage extends StatelessWidget {
-  const KnowledgeBasePage({super.key});
+class _KnowledgeBasePageState extends State<KnowledgeBasePage> {
+  List<KnowledgeDocument> _documents = const <KnowledgeDocument>[];
+  bool _loading = true;
+  bool _uploading = false;
+  String? _notice;
+  bool _noticeIsError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDocuments();
+  }
+
+  Future<void> _loadDocuments() async {
+    setState(() {
+      _loading = true;
+      _notice = null;
+    });
+    try {
+      final documents = await widget.api.fetchDocuments(
+        widget.session.accessToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _documents = documents;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _notice = 'Backend unavailable: ${error.message}';
+        _noticeIsError = true;
+        _documents = const <KnowledgeDocument>[];
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _uploadDocument() async {
+    final file = await pickKnowledgeFile();
+    if (file == null) return;
+
+    setState(() {
+      _uploading = true;
+      _notice = 'Uploading ${file.name} and building AI search chunks...';
+      _noticeIsError = false;
+    });
+
+    try {
+      final document = await widget.api.uploadDocument(
+        fileName: file.name,
+        bytes: file.bytes,
+        accessToken: widget.session.accessToken,
+      );
+      final documents = await widget.api.fetchDocuments(
+        widget.session.accessToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _documents = documents;
+        _notice =
+            '${document.name} uploaded with ${document.chunkCount} AI chunks.';
+        _noticeIsError = document.status == 'error';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _notice = 'Upload failed: ${error.message}';
+        _noticeIsError = true;
+      });
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
       title: 'Knowledge Base',
-      subtitle: 'Document ingestion status for RAG answers.',
-      child: SurfacePanel(
-        child: ListView.separated(
-          itemCount: DemoData.documents.length,
-          separatorBuilder: (_, _) => const Divider(),
-          itemBuilder: (context, index) {
-            final doc = DemoData.documents[index];
-            return ListTile(
-              leading: Icon(fileIcon(doc.fileType)),
-              title: Text(doc.name,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text(
-                  '${doc.chunkCount} chunks · uploaded by ${doc.uploadedBy}'),
-              trailing: Chip(label: Text(doc.status)),
-            );
-          },
-        ),
+      subtitle: 'Upload shop policies and FAQs for AI customer answers.',
+      child: Column(
+        children: [
+          SurfacePanel(
+            child: Row(
+              children: [
+                const Expanded(child: PanelTitle('Uploaded documents')),
+                IconButton.outlined(
+                  tooltip: 'Refresh documents',
+                  onPressed: _loading || _uploading ? null : _loadDocuments,
+                  icon: _loading
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _uploading ? null : _uploadDocument,
+                  icon: _uploading
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.upload_file),
+                  label: Text(_uploading ? 'Uploading' : 'Upload file'),
+                ),
+              ],
+            ),
+          ),
+          if (_notice != null) ...[
+            const SizedBox(height: 12),
+            InlineNotice(
+              icon: _noticeIsError ? Icons.error_outline : Icons.check_circle,
+              text: _notice!,
+            ),
+          ],
+          const SizedBox(height: 12),
+          Expanded(
+            child: SurfacePanel(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _documents.isEmpty
+                      ? const EmptyPanel(
+                          icon: Icons.menu_book,
+                          title: 'No uploaded documents yet',
+                        )
+                      : ListView.separated(
+                          itemCount: _documents.length,
+                          separatorBuilder: (_, _) => const Divider(),
+                          itemBuilder: (context, index) {
+                            final doc = _documents[index];
+                            return ListTile(
+                              leading: Icon(fileIcon(doc.fileType)),
+                              title: Text(
+                                doc.name,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700),
+                              ),
+                              subtitle: Text(
+                                '${doc.chunkCount} chunks · uploaded by ${doc.uploadedBy}',
+                              ),
+                              trailing: Chip(label: Text(doc.status)),
+                            );
+                          },
+                        ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class StaffPage extends StatelessWidget {
-  const StaffPage({super.key});
+class StaffPage extends StatefulWidget {
+  const StaffPage({super.key, required this.api, required this.session});
+
+  final SmartHelpdeskWebApiClient api;
+  final UserSession session;
+
+  @override
+  State<StaffPage> createState() => _StaffPageState();
+}
+
+class _StaffPageState extends State<StaffPage> {
+  List<StaffUser> _staff = const <StaffUser>[];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStaff();
+  }
+
+  Future<void> _loadStaff() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final staff = await widget.api.fetchStaff(widget.session.accessToken);
+      if (!mounted) return;
+      setState(() => _staff = staff);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _staff = const <StaffUser>[];
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
-      title: 'Staff',
-      subtitle: 'Agents, owners, and account status.',
-      child: SurfacePanel(
-        child: ListView.separated(
-          itemCount: DemoData.staff.length,
-          separatorBuilder: (_, _) => const Divider(),
-          itemBuilder: (context, index) {
-            final staff = DemoData.staff[index];
-            return ListTile(
-              leading: CircleAvatar(child: Text(staff.name.substring(0, 1))),
-              title: Text(staff.name,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
-              subtitle: Text('${staff.email} · ${roleLabel(staff.role)}'),
-              trailing: Chip(label: Text(staff.status)),
-            );
-          },
-        ),
+      title: 'Team',
+      subtitle: 'Employees who can receive and reply to customer tickets.',
+      child: Column(
+        children: [
+          if (_error != null) ...[
+            InlineNotice(
+              icon: Icons.cloud_off,
+              text: 'Backend unavailable: $_error',
+            ),
+            const SizedBox(height: 12),
+          ],
+          Expanded(
+            child: SurfacePanel(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _staff.isEmpty
+                      ? const EmptyPanel(
+                          icon: Icons.groups,
+                          title: 'No team members found',
+                        )
+                      : ListView.separated(
+                          itemCount: _staff.length,
+                          separatorBuilder: (_, _) => const Divider(),
+                          itemBuilder: (context, index) {
+                            final staff = _staff[index];
+                            final initial = staff.name.isNotEmpty
+                                ? staff.name.substring(0, 1)
+                                : '?';
+                            return ListTile(
+                              leading: CircleAvatar(child: Text(initial)),
+                              title: Text(
+                                staff.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${staff.email} · ${roleLabel(staff.role)}',
+                              ),
+                              trailing: Chip(label: Text(staff.status)),
+                            );
+                          },
+                        ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class ChannelsPage extends StatelessWidget {
-  const ChannelsPage({super.key});
+class ChannelsPage extends StatefulWidget {
+  const ChannelsPage({super.key, required this.api, required this.session});
+
+  final SmartHelpdeskWebApiClient api;
+  final UserSession session;
+
+  @override
+  State<ChannelsPage> createState() => _ChannelsPageState();
+}
+
+class _ChannelsPageState extends State<ChannelsPage> {
+  List<ChannelSetting> _channels = const <ChannelSetting>[];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChannels();
+  }
+
+  Future<void> _loadChannels() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final channels =
+          await widget.api.fetchChannels(widget.session.accessToken);
+      if (!mounted) return;
+      setState(() => _channels = channels);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _channels = const <ChannelSetting>[];
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
-      title: 'Channels',
-      subtitle: 'Inbound and outbound integration status.',
-      child: GridView.count(
-        crossAxisCount: MediaQuery.sizeOf(context).width >= 1000 ? 3 : 1,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 2.8,
-        children: const [
-          ChannelPanel(
-            icon: Icons.public,
-            title: 'Web chat',
-            body: 'Widget enabled with local sender identity.',
-            status: 'active',
-          ),
-          ChannelPanel(
-            icon: Icons.facebook,
-            title: 'Facebook',
-            body: 'Webhook boundary configured for Messenger events.',
-            status: 'mock',
-          ),
-          ChannelPanel(
-            icon: Icons.email,
-            title: 'Email',
-            body: 'Inbound email provider adapter ready for secrets.',
-            status: 'mock',
+      title: 'Settings',
+      subtitle: 'Customer contact channels connected to this helpdesk.',
+      child: Column(
+        children: [
+          if (_error != null) ...[
+            InlineNotice(
+              icon: Icons.cloud_off,
+              text: 'Backend unavailable: $_error',
+            ),
+            const SizedBox(height: 12),
+          ],
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _channels.isEmpty
+                    ? const EmptyPanel(
+                        icon: Icons.settings,
+                        title: 'No channel settings found',
+                      )
+                    : GridView.count(
+                        crossAxisCount:
+                            MediaQuery.sizeOf(context).width >= 1000 ? 3 : 1,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: 2.8,
+                        children: [
+                          for (final channel in _channels)
+                            ChannelPanel(
+                              icon: channelIcon(channel.channel),
+                              title: channel.title,
+                              body: channel.body,
+                              status: channel.status,
+                            ),
+                        ],
+                      ),
           ),
         ],
       ),
@@ -1060,25 +1198,17 @@ class WidgetDemoPage extends StatefulWidget {
 }
 
 class _WidgetDemoPageState extends State<WidgetDemoPage> {
-  final _message = TextEditingController(text: 'How long is the warranty?');
-  final _senderId = 'web-demo-customer';
-  final List<WidgetChatMessage> _messages = [
-    const WidgetChatMessage(
-      content: 'Hi, how long is the headphone warranty?',
-      isCustomer: true,
-    ),
-    const WidgetChatMessage(
-      content:
-          'Most headphones include a 12-month warranty. I can connect you with an agent for order-specific help.',
-      isCustomer: false,
-    ),
-  ];
+  final _message = TextEditingController();
+  final _customerName = TextEditingController(text: 'Customer');
+  final _senderId = 'web-customer-${DateTime.now().millisecondsSinceEpoch}';
+  final List<WidgetChatMessage> _messages = <WidgetChatMessage>[];
   bool _sending = false;
   String? _status;
 
   @override
   void dispose() {
     _message.dispose();
+    _customerName.dispose();
     super.dispose();
   }
 
@@ -1094,15 +1224,18 @@ class _WidgetDemoPageState extends State<WidgetDemoPage> {
     try {
       final result = await widget.api.sendWebMessage(
         senderId: _senderId,
-        customerName: 'Demo Customer',
+        customerName: _customerName.text.trim().isEmpty
+            ? 'Customer'
+            : _customerName.text.trim(),
         content: content,
       );
       final bot = result.botMessage;
       if (!mounted) return;
       setState(() {
         if (bot != null) {
-          _messages
-              .add(WidgetChatMessage(content: bot.content, isCustomer: false));
+          _messages.add(
+            WidgetChatMessage(content: bot.content, isCustomer: false),
+          );
         }
         _status =
             '${result.action} · ${result.intent} · ticket ${result.ticketId}';
@@ -1110,13 +1243,6 @@ class _WidgetDemoPageState extends State<WidgetDemoPage> {
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
-        _messages.add(
-          WidgetChatMessage(
-            content:
-                'The local API is not reachable. Start the stack with ./start.sh.',
-            isCustomer: false,
-          ),
-        );
         _status = error.message;
       });
     } finally {
@@ -1127,8 +1253,8 @@ class _WidgetDemoPageState extends State<WidgetDemoPage> {
   @override
   Widget build(BuildContext context) {
     return PageScaffold(
-      title: 'Widget Demo',
-      subtitle: 'Customer-side chat flow rendered in Flutter.',
+      title: 'Customer Chat',
+      subtitle: 'The customer-side widget that would live on the shop website.',
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
@@ -1139,21 +1265,28 @@ class _WidgetDemoPageState extends State<WidgetDemoPage> {
                 const ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: _BrandIcon(),
-                  title: Text('Little Birdies Support',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text('Usually replies in a few seconds'),
+                  title: Text(
+                    'Little Birdies Support',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text('Connected to the helpdesk backend'),
                 ),
                 const Divider(),
                 Expanded(
-                  child: ListView(
-                    children: [
-                      for (final message in _messages)
-                        ChatBubble(
-                          text: message.content,
-                          alignRight: message.isCustomer,
+                  child: _messages.isEmpty
+                      ? const EmptyPanel(
+                          icon: Icons.chat_bubble_outline,
+                          title: 'No customer messages yet',
+                        )
+                      : ListView(
+                          children: [
+                            for (final message in _messages)
+                              ChatBubble(
+                                text: message.content,
+                                alignRight: message.isCustomer,
+                              ),
+                          ],
                         ),
-                    ],
-                  ),
                 ),
                 if (_status != null) ...[
                   const SizedBox(height: 10),
@@ -1162,6 +1295,17 @@ class _WidgetDemoPageState extends State<WidgetDemoPage> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
+                    SizedBox(
+                      width: 150,
+                      child: TextField(
+                        controller: _customerName,
+                        decoration: const InputDecoration(
+                          labelText: 'Customer',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
                         controller: _message,
@@ -1213,17 +1357,19 @@ class PageScaffold extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              style: Theme.of(context)
-                  .textTheme
-                  .headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w800)),
+          Text(
+            title,
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 4),
-          Text(subtitle,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.grey.shade700)),
+          Text(
+            subtitle,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
+          ),
           const SizedBox(height: 20),
           Expanded(child: child),
         ],
@@ -1245,48 +1391,7 @@ class SurfacePanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         side: const BorderSide(color: Color(0xffd8dee4)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: child,
-      ),
-    );
-  }
-}
-
-class MetricCard extends StatelessWidget {
-  const MetricCard({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.delta,
-  });
-
-  final String label;
-  final String value;
-  final String delta;
-
-  @override
-  Widget build(BuildContext context) {
-    return SurfacePanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade700)),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Text(value,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              const Spacer(),
-              Chip(label: Text(delta)),
-            ],
-          ),
-        ],
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
     );
   }
 }
@@ -1317,8 +1422,10 @@ class ChannelPanel extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
                 const SizedBox(height: 4),
                 Text(body, maxLines: 2, overflow: TextOverflow.ellipsis),
               ],
@@ -1416,11 +1523,12 @@ class PanelTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(text,
-        style: Theme.of(context)
-            .textTheme
-            .titleMedium
-            ?.copyWith(fontWeight: FontWeight.w800));
+    return Text(
+      text,
+      style: Theme.of(
+        context,
+      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+    );
   }
 }
 
@@ -1502,10 +1610,7 @@ class Ticket {
 }
 
 class MessageItem {
-  const MessageItem({
-    required this.senderType,
-    required this.content,
-  });
+  const MessageItem({required this.senderType, required this.content});
 
   final String senderType;
   final String content;
@@ -1534,6 +1639,7 @@ class WebMessageResult {
 
 class KnowledgeDocument {
   const KnowledgeDocument({
+    required this.id,
     required this.name,
     required this.fileType,
     required this.status,
@@ -1541,6 +1647,7 @@ class KnowledgeDocument {
     required this.uploadedBy,
   });
 
+  final String id;
   final String name;
   final String fileType;
   final String status;
@@ -1562,152 +1669,23 @@ class StaffUser {
   final String status;
 }
 
-class TrendPoint {
-  const TrendPoint(this.day, this.count);
+class ChannelSetting {
+  const ChannelSetting({
+    required this.channel,
+    required this.title,
+    required this.body,
+    required this.status,
+  });
 
-  final String day;
-  final int count;
-}
-
-class QuestionCount {
-  const QuestionCount(this.question, this.count);
-
-  final String question;
-  final int count;
-}
-
-class DemoData {
-  static const tickets = <Ticket>[
-    Ticket(
-      id: 'TCK-1024',
-      customerName: 'Linh Tran',
-      source: ChannelType.web,
-      status: TicketStatus.pending,
-      intent: 'complaint',
-      summary: 'Refund request after delayed delivery',
-    ),
-    Ticket(
-      id: 'TCK-1023',
-      customerName: 'Minh Pham',
-      source: ChannelType.facebook,
-      status: TicketStatus.open,
-      intent: 'question',
-      summary: 'Asked about warranty period for headphones',
-    ),
-    Ticket(
-      id: 'TCK-1022',
-      customerName: 'An Nguyen',
-      source: ChannelType.email,
-      status: TicketStatus.inProgress,
-      intent: 'question',
-      summary: 'Needs invoice copy for order #4821',
-    ),
-  ];
-
-  static const messages = <String, List<MessageItem>>{
-    'TCK-1024': [
-      MessageItem(
-        senderType: 'customer',
-        content:
-            'I want a refund because my delivery is late and nobody has replied.',
-      ),
-      MessageItem(
-        senderType: 'bot',
-        content:
-            'I am sorry about the delay. A staff member is reviewing this now.',
-      ),
-    ],
-    'TCK-1023': [
-      MessageItem(
-        senderType: 'customer',
-        content: 'How long is the warranty for the wireless headphones?',
-      ),
-      MessageItem(
-        senderType: 'bot',
-        content:
-            'Most headphones include a 12-month warranty. I can connect you with an agent if you need order-specific help.',
-      ),
-    ],
-    'TCK-1022': [
-      MessageItem(
-        senderType: 'customer',
-        content: 'Can you send me another invoice copy for order #4821?',
-      ),
-      MessageItem(
-        senderType: 'human',
-        content: 'I found the order and will send the invoice to this thread.',
-      ),
-    ],
-  };
-
-  static const documents = <KnowledgeDocument>[
-    KnowledgeDocument(
-      name: 'Return policy.txt',
-      fileType: 'txt',
-      status: 'ready',
-      chunkCount: 18,
-      uploadedBy: 'Shop Owner',
-    ),
-    KnowledgeDocument(
-      name: 'Warranty terms.pdf',
-      fileType: 'pdf',
-      status: 'processing',
-      chunkCount: 0,
-      uploadedBy: 'Shop Owner',
-    ),
-    KnowledgeDocument(
-      name: 'Shipping FAQ.docx',
-      fileType: 'docx',
-      status: 'ready',
-      chunkCount: 24,
-      uploadedBy: 'Shop Owner',
-    ),
-  ];
-
-  static const staff = <StaffUser>[
-    StaffUser(
-      name: 'Support Agent',
-      email: 'agent@example.com',
-      role: UserRole.agent,
-      status: 'online',
-    ),
-    StaffUser(
-      name: 'Shop Owner',
-      email: 'owner@example.com',
-      role: UserRole.superAdmin,
-      status: 'online',
-    ),
-    StaffUser(
-      name: 'Evening Agent',
-      email: 'evening@example.com',
-      role: UserRole.agent,
-      status: 'offline',
-    ),
-  ];
-
-  static const trend = <TrendPoint>[
-    TrendPoint('Mon', 48),
-    TrendPoint('Tue', 62),
-    TrendPoint('Wed', 71),
-    TrendPoint('Thu', 56),
-    TrendPoint('Fri', 88),
-    TrendPoint('Sat', 93),
-    TrendPoint('Sun', 78),
-  ];
-
-  static const topQuestions = <QuestionCount>[
-    QuestionCount('What is the warranty period?', 31),
-    QuestionCount('How do I request a refund?', 24),
-    QuestionCount('Where is my delivery?', 22),
-    QuestionCount('Can I get another invoice?', 17),
-  ];
+  final ChannelType channel;
+  final String title;
+  final String body;
+  final String status;
 }
 
 class SmartHelpdeskWebApiClient {
-  SmartHelpdeskWebApiClient({
-    String? baseUrl,
-    http.Client? httpClient,
-  })  : baseUrl = baseUrl ??
+  SmartHelpdeskWebApiClient({String? baseUrl, http.Client? httpClient})
+      : baseUrl = baseUrl ??
             const String.fromEnvironment(
               'API_BASE_URL',
               defaultValue: 'http://localhost:8000',
@@ -1722,6 +1700,51 @@ class SmartHelpdeskWebApiClient {
     final items = payload['items'] as List<dynamic>? ?? const <dynamic>[];
     return [
       for (final item in items) _ticketFromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  Future<List<KnowledgeDocument>> fetchDocuments(String accessToken) async {
+    final payload = await _get('/documents', accessToken);
+    final items = payload['items'] as List<dynamic>? ?? const <dynamic>[];
+    return [
+      for (final item in items) _documentFromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  Future<KnowledgeDocument> uploadDocument({
+    required String fileName,
+    required List<int> bytes,
+    required String accessToken,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/documents/upload'),
+    );
+    request.headers['authorization'] = 'Bearer $accessToken';
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+    );
+
+    final streamed = await _http.send(request);
+    final response = await http.Response.fromStream(streamed);
+    final payload = _decode(response);
+    return _documentFromJson(payload['document'] as Map<String, dynamic>);
+  }
+
+  Future<List<StaffUser>> fetchStaff(String accessToken) async {
+    final payload = await _get('/staff', accessToken);
+    final items = payload['items'] as List<dynamic>? ?? const <dynamic>[];
+    return [
+      for (final item in items) _staffFromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  Future<List<ChannelSetting>> fetchChannels(String accessToken) async {
+    final payload = await _get('/channels', accessToken);
+    final items = payload['items'] as List<dynamic>? ?? const <dynamic>[];
+    return [
+      for (final item in items)
+        _channelSettingFromJson(item as Map<String, dynamic>),
     ];
   }
 
@@ -1741,17 +1764,18 @@ class SmartHelpdeskWebApiClient {
     String content,
     String accessToken,
   ) async {
-    final payload = await _post(
-      '/tickets/$ticketId/messages',
-      accessToken,
-      {'content': content},
-    );
+    final payload = await _post('/tickets/$ticketId/messages', accessToken, {
+      'content': content,
+    });
     return _messageFromJson(payload['message'] as Map<String, dynamic>);
   }
 
   Future<Ticket> resolveTicket(Ticket ticket, String accessToken) async {
-    final payload =
-        await _post('/tickets/${ticket.id}/resolve', accessToken, {});
+    final payload = await _post(
+      '/tickets/${ticket.id}/resolve',
+      accessToken,
+      {},
+    );
     return _ticketFromJson(payload);
   }
 
@@ -1850,6 +1874,37 @@ MessageItem _messageFromJson(Map<String, dynamic> json) {
   );
 }
 
+KnowledgeDocument _documentFromJson(Map<String, dynamic> json) {
+  return KnowledgeDocument(
+    id: json['id']?.toString() ?? '',
+    name: (json['name'] ?? 'Untitled document').toString(),
+    fileType: (json['file_type'] ?? json['fileType'] ?? 'txt').toString(),
+    status:
+        (json['embedding_status'] ?? json['status'] ?? 'processing').toString(),
+    chunkCount: int.tryParse((json['chunk_count'] ?? 0).toString()) ?? 0,
+    uploadedBy:
+        (json['uploaded_by'] ?? json['uploadedBy'] ?? 'Shop Owner').toString(),
+  );
+}
+
+StaffUser _staffFromJson(Map<String, dynamic> json) {
+  return StaffUser(
+    name: (json['full_name'] ?? json['name'] ?? 'Unnamed user').toString(),
+    email: (json['email'] ?? '').toString(),
+    role: userRoleFromValue(json['role']?.toString()),
+    status: (json['status'] ?? 'offline').toString(),
+  );
+}
+
+ChannelSetting _channelSettingFromJson(Map<String, dynamic> json) {
+  return ChannelSetting(
+    channel: channelFromValue((json['id'] ?? json['channel'])?.toString()),
+    title: (json['title'] ?? 'Channel').toString(),
+    body: (json['body'] ?? '').toString(),
+    status: (json['status'] ?? 'not_configured').toString(),
+  );
+}
+
 const ownerDemoId = '00000000-0000-4000-8000-000000000001';
 const agentDemoId = '00000000-0000-4000-8000-000000000002';
 
@@ -1857,6 +1912,13 @@ String roleLabel(UserRole role) {
   return switch (role) {
     UserRole.superAdmin => 'super_admin',
     UserRole.agent => 'agent',
+  };
+}
+
+UserRole userRoleFromValue(String? value) {
+  return switch (value) {
+    'super_admin' => UserRole.superAdmin,
+    _ => UserRole.agent,
   };
 }
 

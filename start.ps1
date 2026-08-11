@@ -201,7 +201,7 @@ try {
     $aiPython = Ensure-PythonService -ServiceDirectory $aiDirectory `
         -ImportCheck "import fastapi, uvicorn, pydantic_settings, httpx, chromadb, pypdf, docx"
     $apiPython = Ensure-PythonService -ServiceDirectory $apiDirectory `
-        -ImportCheck "import fastapi, uvicorn, pydantic_settings, httpx, jwt"
+        -ImportCheck "import fastapi, uvicorn, pydantic_settings, httpx, jwt, multipart"
 
     $flutterCommand = Get-Command flutter -ErrorAction SilentlyContinue
     if (-not $flutterCommand) {
@@ -221,6 +221,7 @@ try {
     $env:RAG_CONFIDENCE_THRESHOLD = "0.0"
     $env:CHROMA_DB_PATH = (Join-Path $aiDirectory "chroma")
     $env:LOCAL_MOCK_AUTH_ENABLED = "true"
+    $env:LOCAL_MOCK_DB_ENABLED = "true"
     $env:AI_SERVICE_URL = "http://127.0.0.1:8001"
     $env:API_BASE_URL = "http://127.0.0.1:8000"
 
@@ -229,18 +230,6 @@ try {
         -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001") `
         -WorkingDirectory $aiDirectory -Port 8001
     Wait-ForService -Record $ai -HealthUrl "http://127.0.0.1:8001/health"
-
-    Write-Step "Loading the sample knowledge base"
-    $samplePath = Join-Path $projectRoot "docs\demo-data\sample-support-policy.txt"
-    $documentBody = @{
-        document_id = "demo-support-policy"
-        file_url = $samplePath
-        file_type = "txt"
-        file_name = "sample-support-policy.txt"
-        file_size_bytes = (Get-Item -LiteralPath $samplePath).Length
-    } | ConvertTo-Json
-    $null = Invoke-RestMethod -Uri "http://127.0.0.1:8001/documents/process" `
-        -Method Post -ContentType "application/json" -Body $documentBody
 
     Write-Step "Starting backend API on http://127.0.0.1:8000"
     $api = Start-TrackedProcess -Name "api" -Executable $apiPython `

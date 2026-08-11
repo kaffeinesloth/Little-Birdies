@@ -10,7 +10,7 @@ from app.db.supabase import get_supabase_client
 from app.main import create_app
 from app.schemas.common import IntentType
 from app.services.ai_client import AIProcessingResult
-from app.services.fcm import MockFCMSender
+from app.services.fcm import LocalFCMSender
 from app.services.notifications import NotificationService
 from app.services.orchestrator import InboundOrchestrator
 from tests.fakes import FakeSupabase
@@ -68,7 +68,7 @@ def test_online_agents_and_super_admins_are_notified_with_fcm() -> None:
     offline = staff_user(status="offline")
     disabled = staff_user(status="disabled")
     fake = FakeSupabase({"users": [agent, owner, offline, disabled]})
-    fcm = MockFCMSender()
+    fcm = LocalFCMSender()
 
     notifications = NotificationService(fake, fcm).create_urgent_ticket_notifications(
         ticket_id=str(uuid4()),

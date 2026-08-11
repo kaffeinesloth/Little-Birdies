@@ -14,7 +14,7 @@ class FCMSender(Protocol):
     def send(self, *, user: dict[str, Any], title: str, body: str, data: dict[str, Any]) -> FCMPushResult: ...
 
 
-class MockFCMSender:
+class LocalFCMSender:
     def __init__(self) -> None:
         self.sent: list[dict[str, Any]] = []
 
@@ -29,9 +29,9 @@ class MockFCMSender:
         return FCMPushResult(
             recipient_id=user["id"],
             delivered=True,
-            provider_message_id=f"mock-fcm-{user['id']}",
+            provider_message_id=f"local-fcm-{user['id']}",
         )
 
 
 def get_fcm_sender() -> FCMSender:
-    return MockFCMSender()
+    return LocalFCMSender()

@@ -16,3 +16,14 @@ class DocumentService(TableService):
 
     def update_document(self, document_id: str, payload: DocumentUpdate) -> dict[str, Any]:
         return self.update(document_id, payload)
+
+    def list_documents(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        result = (
+            self.client.table(self.table_name)
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        if not isinstance(result.data, list):
+            return []
+        return result.data[:limit]

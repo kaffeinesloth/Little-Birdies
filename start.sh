@@ -140,7 +140,7 @@ API_DIR="$ROOT_DIR/backend/api"
 WEB_DIR="$ROOT_DIR/web"
 
 AI_PYTHON="$(ensure_python_service "$AI_DIR" 'import fastapi, uvicorn, pydantic_settings, httpx, chromadb, pypdf, docx')"
-API_PYTHON="$(ensure_python_service "$API_DIR" 'import fastapi, uvicorn, pydantic_settings, httpx, jwt')"
+API_PYTHON="$(ensure_python_service "$API_DIR" 'import fastapi, uvicorn, pydantic_settings, httpx, jwt, multipart')"
 
 if [[ ! -f "$WEB_DIR/.dart_tool/package_config.json" ]]; then
   if (( SKIP_INSTALL )); then
@@ -157,15 +157,9 @@ AI_PID="$(start_detached "$AI_DIR" "$LOG_DIR/ai.out.log" "$LOG_DIR/ai.err.log" \
   "$AI_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8001)"
 wait_for_health "AI service" "http://127.0.0.1:8001/health" "$AI_PID" 90
 
-step "Loading sample knowledge base"
-SAMPLE_PATH="$ROOT_DIR/docs/demo-data/sample-support-policy.txt"
-curl -fsS -X POST "http://127.0.0.1:8001/documents/process" \
-  -H "Content-Type: application/json" \
-  -d "{\"document_id\":\"demo-support-policy\",\"file_url\":\"$SAMPLE_PATH\",\"file_type\":\"txt\",\"file_name\":\"sample-support-policy.txt\",\"file_size_bytes\":$(wc -c < "$SAMPLE_PATH")}" >/dev/null
-
 step "Starting backend API on http://127.0.0.1:8000"
 API_PID="$(start_detached "$API_DIR" "$LOG_DIR/api.out.log" "$LOG_DIR/api.err.log" \
-  env APP_ENV=development LOCAL_MOCK_AUTH_ENABLED=true AI_SERVICE_URL=http://127.0.0.1:8001 \
+  env APP_ENV=development LOCAL_MOCK_AUTH_ENABLED=true LOCAL_MOCK_DB_ENABLED=true AI_SERVICE_URL=http://127.0.0.1:8001 \
   "$API_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000)"
 wait_for_health "Backend API" "http://127.0.0.1:8000/health" "$API_PID" 90
 

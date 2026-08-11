@@ -8,6 +8,7 @@ def test_get_supabase_client_returns_rest_adapter_when_mock_disabled() -> None:
     client = get_supabase_client(
         Settings(
             local_mock_auth_enabled=False,
+            local_mock_db_enabled=False,
             supabase_url="https://project.supabase.co",
             supabase_service_role_key="service-key",
         )
@@ -41,6 +42,7 @@ def test_rest_adapter_sends_postgrest_select(monkeypatch) -> None:
         get_supabase_client(
             Settings(
                 local_mock_auth_enabled=False,
+                local_mock_db_enabled=False,
                 supabase_url="https://project.supabase.co",
                 supabase_service_role_key="service-key",
             )
