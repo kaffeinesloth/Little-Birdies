@@ -31,10 +31,10 @@ Smart Helpdesk là nền tảng SaaS giúp các shop online vừa và nhỏ tự
 
 Repository hiện là một monorepo Smart Helpdesk AI có thể chạy demo local:
 
-- `services/api`: Backend FastAPI có health check, data access mock tương thích Supabase, auth/RBAC, API ticket/message, webhook Web/Facebook/Email, notification/presence, xử lý lỗi an toàn, CORS, và bảo vệ rate limit cho public endpoint.
-- `services/ai`: AI microservice FastAPI có health check, fallback phân loại intent deterministic, xử lý tài liệu TXT/PDF/DOCX, RAG với ChromaDB, và fallback local khi chưa có LLM credential.
-- `apps/web-admin`: Dashboard Next.js App Router có login/mock auth, navigation theo role, Unified Inbox, Knowledge Base upload UI, quản lý staff, Channel Settings, dashboard metrics, và widget demo.
-- `apps/mobile`: Flutter app cho nhân viên CSKH có login/mock auth, navigation theo role, Inbox, Ticket Detail, Notifications, dashboard đơn giản cho admin, Settings/Profile, Online/Offline toggle, heartbeat, và mock push notification.
+- `backend/api`: Backend FastAPI có health check, data access mock tương thích Supabase, auth/RBAC, API ticket/message, webhook Web/Facebook/Email, notification/presence, xử lý lỗi an toàn, CORS, và bảo vệ rate limit cho public endpoint.
+- `backend/ai`: AI microservice FastAPI có health check, fallback phân loại intent deterministic, xử lý tài liệu TXT/PDF/DOCX, RAG với ChromaDB, và fallback local khi chưa có LLM credential.
+- `web`: Dashboard Flutter Web có login/mock auth, navigation theo role, Unified Inbox, Knowledge Base UI, quản lý staff, Channel Settings, dashboard metrics, và widget demo.
+- `mobile`: Flutter app cho nhân viên CSKH có login/mock auth, navigation theo role, Inbox, Ticket Detail, Notifications, dashboard đơn giản cho admin, Settings/Profile, Online/Offline toggle, heartbeat, và mock push notification.
 - `infra/supabase`: SQL migrations cho profile liên kết Supabase Auth, tickets, messages, documents, channels, notifications, enum, index, và ghi chú/policy RLS.
 - `docs`: Tài liệu local demo, deployment, security, integrations, testing, và demo script.
 
@@ -44,10 +44,22 @@ Dự án có thể demo local mà không cần credential thật của Supabase,
 
 Chi tiết đầy đủ nằm trong [`docs/local-demo.md`](docs/local-demo.md). Tóm tắt:
 
+Trên macOS/Linux có thể chạy toàn bộ demo bằng:
+
+```sh
+./start.sh
+```
+
+Trên Windows PowerShell:
+
+```powershell
+.\start.cmd
+```
+
 1. Chạy AI service:
 
 ```sh
-cd services/ai
+cd backend/ai
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -65,7 +77,7 @@ curl -X POST http://127.0.0.1:8001/documents/process \
 3. Chạy API service:
 
 ```sh
-cd services/api
+cd backend/api
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -75,11 +87,11 @@ APP_ENV=development LOCAL_MOCK_AUTH_ENABLED=true AI_SERVICE_URL=http://127.0.0.1
 4. Chạy Web Admin:
 
 ```sh
-cd apps/web-admin
-./node_modules/.bin/next dev --hostname 127.0.0.1 --port 3000
+cd web
+flutter run -d chrome --web-hostname 127.0.0.1 --web-port 3000 --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
-Mở `http://127.0.0.1:3000/login` và dùng:
+Mở `http://127.0.0.1:3000` và dùng:
 
 - `owner@example.com` / `password` cho `super_admin`
 - `agent@example.com` / `password` cho `agent`
@@ -87,7 +99,7 @@ Mở `http://127.0.0.1:3000/login` và dùng:
 5. Chạy Mobile nếu môi trường hỗ trợ:
 
 ```sh
-cd apps/mobile
+cd mobile
 flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
@@ -380,12 +392,12 @@ AI Core là lớp tự động hóa của hệ thống.
 | Vector Database | ChromaDB |
 | Backend API | FastAPI |
 | Database và Auth | Supabase: PostgreSQL, Realtime, Auth |
-| Web Frontend | Next.js + Tailwind CSS |
+| Web Frontend | Flutter Web |
 | Mobile App | Flutter |
 | Tích hợp Email | Mailgun hoặc SendGrid Webhook/API |
 | Tích hợp Facebook | Meta Messenger Platform API Webhook |
 | Push Notification | Firebase Cloud Messaging |
-| Hosting | Railway hoặc Render cho backend, Vercel cho web |
+| Hosting | Railway hoặc Render cho backend, static hosting cho Flutter web |
 
 ## Lộ trình thực hiện
 
@@ -481,13 +493,13 @@ Dự án cuối cùng nên thể hiện đầy đủ luồng xử lý sau:
 Chạy bộ kiểm thử cuối:
 
 ```sh
-cd services/api && .venv/bin/python -m pytest
-cd services/ai && .venv/bin/python -m pytest
-cd apps/web-admin && ./node_modules/.bin/next lint
-cd apps/web-admin && ./node_modules/.bin/vitest run
-cd apps/web-admin && ./node_modules/.bin/next build
-cd apps/mobile && flutter analyze
-cd apps/mobile && flutter test
+cd backend/api && .venv/bin/python -m pytest
+cd backend/ai && .venv/bin/python -m pytest
+cd web && flutter analyze
+cd web && flutter test
+cd web && flutter build web
+cd mobile && flutter analyze
+cd mobile && flutter test
 ```
 
 ## Thông tin repository

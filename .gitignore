@@ -14,7 +14,7 @@
 *.log
 logs/
 
-# Node / Next.js
+# Frontend build artifacts
 node_modules/
 .next/
 out/

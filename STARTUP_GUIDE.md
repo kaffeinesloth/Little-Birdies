@@ -18,22 +18,14 @@ The Flutter mobile app is optional and is not started automatically because it r
 Install these tools before running the project for the first time:
 
 - Python 3.12 or newer
-- Node.js LTS, which includes `npm`
-- pnpm
+- Flutter SDK
 - Git, if you are cloning the repository from GitHub
-
-After installing Node.js, open a new PowerShell window and install pnpm:
-
-```powershell
-npm install -g pnpm
-```
 
 Verify that the required commands are available:
 
 ```powershell
 python --version
-node --version
-pnpm --version
+flutter --version
 git --version
 ```
 
@@ -109,7 +101,7 @@ From the repository root, run:
 .\stop.cmd
 ```
 
-The shutdown script stops only the processes recorded by `start.cmd`. It does not broadly stop unrelated Python or Node.js programs.
+The shutdown script stops only the processes recorded by `start.cmd`. It does not broadly stop unrelated Python or Flutter programs.
 
 ## Later launches
 
@@ -133,9 +125,17 @@ git pull
 .\start.cmd -OpenBrowser
 ```
 
+On macOS/Linux, use:
+
+```sh
+./stop.sh
+git pull
+./start.sh --open-browser
+```
+
 ## Troubleshooting
 
-### Python, Node.js, or pnpm was not found
+### Python or Flutter was not found
 
 Install the missing system tool, close PowerShell, open a new PowerShell window, and verify its version before trying again.
 
@@ -195,7 +195,7 @@ The command wrappers handle the PowerShell execution policy without changing the
 After installing Flutter and starting an Android emulator or connecting a device, run:
 
 ```powershell
-cd apps\mobile
+cd mobile
 flutter pub get
 flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```

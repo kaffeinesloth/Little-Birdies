@@ -41,10 +41,10 @@ Create the initial Smart Helpdesk AI monorepo structure.
 Requirements:
 - Keep the existing README.md, README.vi.md, and CODEX_DEVELOPMENT_GUIDE.md.
 - Create a practical monorepo layout:
-  - apps/web-admin for the Next.js Web Admin Dashboard and embeddable Chat Widget demo.
-  - apps/mobile for the Flutter Mobile App.
-  - services/api for the FastAPI backend.
-  - services/ai for the FastAPI AI microservice.
+  - web for the Flutter Web Admin Dashboard and embeddable Chat Widget demo.
+  - mobile for the Flutter Mobile App.
+  - backend/api for the FastAPI backend.
+  - backend/ai for the FastAPI AI microservice.
   - packages/shared for shared API contracts, schemas, and documentation.
   - infra for Supabase SQL migrations and deployment notes.
   - docs for architecture and API documentation.
@@ -60,7 +60,7 @@ Verification:
 ## Prompt 02 - Scaffold Backend API
 
 ```text
-Scaffold the services/api FastAPI backend.
+Scaffold the backend/api FastAPI backend.
 
 Requirements:
 - Use Python FastAPI with a clean app structure:
@@ -166,7 +166,7 @@ Verification:
 ## Prompt 06 - Implement Tickets And Messages API
 
 ```text
-Build the Tickets and Messages API in services/api.
+Build the Tickets and Messages API in backend/api.
 
 Requirements:
 - Endpoints:
@@ -219,7 +219,7 @@ Verification:
 ## Prompt 08 - Scaffold AI Microservice
 
 ```text
-Scaffold services/ai as a FastAPI AI microservice.
+Scaffold backend/ai as a FastAPI AI microservice.
 
 Requirements:
 - Create app/main.py, app/core/config.py, app/routers, app/services, app/schemas, tests.
@@ -245,7 +245,7 @@ Verification:
 ## Prompt 09 - Implement Intent Classification
 
 ```text
-Implement AI intent classification in services/ai.
+Implement AI intent classification in backend/ai.
 
 Requirements:
 - classify_intent(message_text) returns:
@@ -262,13 +262,13 @@ Requirements:
 - Add tests for question, complaint, spam, and timeout fallback.
 
 Verification:
-- Run tests for services/ai.
+- Run tests for backend/ai.
 ```
 
 ## Prompt 10 - Implement Document Processing And ChromaDB
 
 ```text
-Implement the Knowledge Base document processing pipeline in services/ai.
+Implement the Knowledge Base document processing pipeline in backend/ai.
 
 Requirements:
 - Support PDF, DOCX, and TXT.
@@ -292,7 +292,7 @@ Verification:
 ## Prompt 11 - Implement RAG Answering
 
 ```text
-Implement RAG answering in services/ai.
+Implement RAG answering in backend/ai.
 
 Requirements:
 - rag_answer(question) must:
@@ -309,16 +309,16 @@ Requirements:
 - Add tests for answer found and no-context escalation.
 
 Verification:
-- Run tests for services/ai.
+- Run tests for backend/ai.
 ```
 
 ## Prompt 12 - Connect Backend To AI Service
 
 ```text
-Connect services/api to services/ai.
+Connect backend/api to backend/ai.
 
 Requirements:
-- Add an AI client in services/api that calls:
+- Add an AI client in backend/api that calls:
   - /classify
   - /rag/answer
   - /process-message
@@ -361,7 +361,7 @@ Verification:
 ## Prompt 14 - Scaffold Web Admin App
 
 ```text
-Scaffold apps/web-admin as a Next.js + Tailwind CSS app.
+Scaffold web as a Flutter web app.
 
 Requirements:
 - Use TypeScript.
@@ -377,7 +377,7 @@ Requirements:
 - Add shared layout with navigation that respects role:
   - super_admin sees all sections.
   - agent sees Inbox only.
-- Add API client module pointing to services/api.
+- Add API client module pointing to backend/api.
 - Add auth/session placeholders compatible with Supabase Auth.
 - Add polished but practical UI components.
 
@@ -389,7 +389,7 @@ Verification:
 ## Prompt 15 - Implement Web Login And RBAC UI
 
 ```text
-Implement login and role-based navigation in apps/web-admin.
+Implement login and role-based navigation in web.
 
 Requirements:
 - Login with email/password through Supabase Auth or a mocked local auth mode when env vars are missing.
@@ -410,7 +410,7 @@ Verification:
 ## Prompt 16 - Implement Unified Inbox UI
 
 ```text
-Build the Unified Inbox in apps/web-admin.
+Build the Unified Inbox in web.
 
 Requirements:
 - Ticket list with:
@@ -482,7 +482,7 @@ Verification:
 Implement the Web Chat Widget and widget demo.
 
 Requirements:
-- Create an embeddable widget module in apps/web-admin or a clear package location.
+- Create an embeddable widget module in web or a clear package location.
 - Widget behavior:
   - floating bottom-right chat button
   - open/close chat panel
@@ -503,7 +503,7 @@ Verification:
 ## Prompt 19 - Scaffold Flutter Mobile App
 
 ```text
-Scaffold apps/mobile as a Flutter app for Smart Helpdesk.
+Scaffold mobile as a Flutter app for Smart Helpdesk.
 
 Requirements:
 - Pages/screens:
@@ -513,7 +513,7 @@ Requirements:
   - Notifications
   - Simple Dashboard for super_admin
   - Settings/Profile
-- Add API client for services/api.
+- Add API client for backend/api.
 - Add auth/session placeholder compatible with Supabase Auth.
 - Add role-aware navigation:
   - both roles can access Inbox and Notifications
@@ -585,10 +585,10 @@ Prepare an end-to-end local demo.
 
 Requirements:
 - Add docs/local-demo.md with exact startup steps for:
-  - services/ai
-  - services/api
-  - apps/web-admin
-  - apps/mobile, if practical
+  - backend/ai
+  - backend/api
+  - web
+  - mobile, if practical
 - Add local mock mode so the demo works without real Supabase, Facebook, Email, FCM, or LLM credentials where possible.
 - Demo flow:
   1. Admin logs in.
@@ -670,7 +670,7 @@ Requirements:
   - ChromaDB hosting or persistence
   - API deployment on Railway or Render
   - AI service deployment on Railway or Render
-  - Web Admin deployment on Vercel
+  - Flutter Web Admin static deployment
   - Flutter build notes
   - environment variables for each service
 - Add example deploy config files only if they fit the chosen platform and do not break local development.
@@ -761,4 +761,3 @@ Before changing files:
 Next prompt to implement:
 [paste the next prompt here]
 ```
-

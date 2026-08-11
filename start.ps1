@@ -194,28 +194,27 @@ try {
     }
     $script:systemPython = $pythonCommand.Source
 
-    $aiDirectory = Join-Path $projectRoot "services\ai"
-    $apiDirectory = Join-Path $projectRoot "services\api"
-    $webDirectory = Join-Path $projectRoot "apps\web-admin"
+    $aiDirectory = Join-Path $projectRoot "backend\ai"
+    $apiDirectory = Join-Path $projectRoot "backend\api"
+    $webDirectory = Join-Path $projectRoot "web"
 
     $aiPython = Ensure-PythonService -ServiceDirectory $aiDirectory `
         -ImportCheck "import fastapi, uvicorn, pydantic_settings, httpx, chromadb, pypdf, docx"
     $apiPython = Ensure-PythonService -ServiceDirectory $apiDirectory `
         -ImportCheck "import fastapi, uvicorn, pydantic_settings, httpx, jwt"
 
-    $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
-    $pnpmCommand = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
-    if (-not $nodeCommand -or -not $pnpmCommand) {
-        throw "Node.js and pnpm are required. Install Node.js, then run: npm install -g pnpm"
+    $flutterCommand = Get-Command flutter -ErrorAction SilentlyContinue
+    if (-not $flutterCommand) {
+        throw "Flutter was not found. Install Flutter and add it to PATH."
     }
 
-    $nextCli = Join-Path $webDirectory "node_modules\next\dist\bin\next"
-    if (-not (Test-Path -LiteralPath $nextCli)) {
+    $webPackageConfig = Join-Path $webDirectory ".dart_tool\package_config.json"
+    if (-not (Test-Path -LiteralPath $webPackageConfig)) {
         if ($SkipInstall) {
-            throw "Web dependencies are missing. Run start.cmd without -SkipInstall first."
+            throw "Flutter web dependencies are missing. Run start.cmd without -SkipInstall first."
         }
-        Write-Step "Installing web dependencies"
-        Invoke-Checked -Executable $pnpmCommand.Source -Arguments @("install", "--frozen-lockfile") -WorkingDirectory $webDirectory
+        Write-Step "Installing Flutter web dependencies"
+        Invoke-Checked -Executable $flutterCommand.Source -Arguments @("pub", "get") -WorkingDirectory $webDirectory
     }
 
     $env:APP_ENV = "development"
@@ -223,7 +222,7 @@ try {
     $env:CHROMA_DB_PATH = (Join-Path $aiDirectory "chroma")
     $env:LOCAL_MOCK_AUTH_ENABLED = "true"
     $env:AI_SERVICE_URL = "http://127.0.0.1:8001"
-    $env:NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:8000"
+    $env:API_BASE_URL = "http://127.0.0.1:8000"
 
     Write-Step "Starting AI service on http://127.0.0.1:8001"
     $ai = Start-TrackedProcess -Name "ai" -Executable $aiPython `
@@ -249,11 +248,11 @@ try {
         -WorkingDirectory $apiDirectory -Port 8000
     Wait-ForService -Record $api -HealthUrl "http://127.0.0.1:8000/health"
 
-    Write-Step "Starting web dashboard on http://127.0.0.1:3000"
-    $web = Start-TrackedProcess -Name "web" -Executable $nodeCommand.Source `
-        -Arguments @($nextCli, "dev", "--hostname", "127.0.0.1", "--port", "3000") `
+    Write-Step "Starting Flutter web dashboard on http://127.0.0.1:3000"
+    $web = Start-TrackedProcess -Name "web" -Executable $flutterCommand.Source `
+        -Arguments @("run", "-d", "web-server", "--web-hostname", "127.0.0.1", "--web-port", "3000", "--dart-define=API_BASE_URL=http://127.0.0.1:8000") `
         -WorkingDirectory $webDirectory -Port 3000
-    Wait-ForService -Record $web -HealthUrl "http://127.0.0.1:3000/login" -TimeoutSeconds 90
+    Wait-ForService -Record $web -HealthUrl "http://127.0.0.1:3000" -TimeoutSeconds 120
 
     $state = [pscustomobject]@{
         projectRoot = $projectRoot
@@ -263,14 +262,13 @@ try {
     $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $statePath -Encoding UTF8
 
     Write-Host "`nSmart Helpdesk is running." -ForegroundColor Green
-    Write-Host "Login:  http://127.0.0.1:3000/login"
-    Write-Host "Widget: http://127.0.0.1:3000/widget-demo"
+    Write-Host "Web:    http://127.0.0.1:3000"
     Write-Host "Account: owner@example.com / password"
     Write-Host "Logs:   $logsRoot"
     Write-Host "Stop:   .\stop.cmd"
 
     if ($OpenBrowser) {
-        Start-Process "http://127.0.0.1:3000/login"
+        Start-Process "http://127.0.0.1:3000"
     }
 }
 catch {

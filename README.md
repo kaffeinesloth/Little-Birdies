@@ -34,10 +34,10 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 
 This repository now contains a local-demo-ready Smart Helpdesk AI monorepo:
 
-- `services/api`: FastAPI backend with health check, mocked Supabase-compatible data access, auth/RBAC dependencies, ticket/message APIs, inbound web/Facebook/email webhook boundaries, notification/presence handling, safe error handling, CORS, and public endpoint rate-limit safeguards.
-- `services/ai`: FastAPI AI microservice with health check, deterministic intent classification fallback, document processing for TXT/PDF/DOCX, ChromaDB-backed RAG, and local fallback behavior when LLM credentials are missing.
-- `apps/web-admin`: Next.js App Router dashboard with login/mock auth, role-aware navigation, Unified Inbox, Knowledge Base upload UI, staff management UI, channel settings UI, dashboard metrics, and widget demo.
-- `apps/mobile`: Flutter support-agent app with login/mock auth, role-aware navigation, Inbox, Ticket Detail, Notifications, simple admin dashboard, profile/settings, online/offline toggle, heartbeat, and local push-notification mock path.
+- `backend/api`: FastAPI backend with health check, mocked Supabase-compatible data access, auth/RBAC dependencies, ticket/message APIs, inbound web/Facebook/email webhook boundaries, notification/presence handling, safe error handling, CORS, and public endpoint rate-limit safeguards.
+- `backend/ai`: FastAPI AI microservice with health check, deterministic intent classification fallback, document processing for TXT/PDF/DOCX, ChromaDB-backed RAG, and local fallback behavior when LLM credentials are missing.
+- `web`: Flutter web admin dashboard with login/mock auth, role-aware navigation, Unified Inbox, Knowledge Base status UI, staff management UI, channel settings UI, dashboard metrics, and widget demo.
+- `mobile`: Flutter support-agent app with login/mock auth, role-aware navigation, Inbox, Ticket Detail, Notifications, simple admin dashboard, profile/settings, online/offline toggle, heartbeat, and local push-notification mock path.
 - `infra/supabase`: SQL migrations for Auth-linked user profiles, tickets, messages, documents, channels, notifications, enums, indexes, and RLS policy notes.
 - `docs`: local demo, deployment, security, integration, testing, and demo-script documentation.
 
@@ -47,7 +47,13 @@ The project is designed to run locally without real Supabase, Facebook, Email, F
 
 Detailed steps are in [`docs/local-demo.md`](docs/local-demo.md). The short version is:
 
-### One-command Windows launcher
+### One-command launchers
+
+From macOS/Linux at the repository root:
+
+```sh
+./start.sh
+```
 
 From PowerShell at the repository root:
 
@@ -55,22 +61,28 @@ From PowerShell at the repository root:
 .\start.cmd
 ```
 
-The first run creates the Python virtual environments, installs dependencies, starts the AI service, API, and Web Admin, and loads the sample knowledge base. Open `http://127.0.0.1:3000/login`, or use `.\start.cmd -OpenBrowser` to open it automatically. The `.cmd` wrapper works even when Windows blocks direct PowerShell script execution.
+The first run creates the Python virtual environments, installs dependencies, starts the AI service, API, and Flutter Web Admin, and loads the sample knowledge base. Open `http://127.0.0.1:3000`, or use `./start.sh --open-browser` on macOS/Linux or `.\start.cmd -OpenBrowser` on Windows to open it automatically.
 
 Stop only the processes launched by the script with:
+
+```sh
+./stop.sh
+```
+
+or on Windows:
 
 ```powershell
 .\stop.cmd
 ```
 
-Use `.\start.cmd -SkipInstall` on later runs when dependencies are already installed. The Flutter mobile app remains optional and is started separately because it requires a selected device or emulator.
+Use `./start.sh --skip-install` or `.\start.cmd -SkipInstall` on later runs when dependencies are already installed. The Flutter mobile app remains optional and is started separately because it requires a selected device or emulator.
 
 ### Manual startup
 
 1. Start AI service:
 
 ```sh
-cd services/ai
+cd backend/ai
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -88,7 +100,7 @@ curl -X POST http://127.0.0.1:8001/documents/process \
 3. Start API service:
 
 ```sh
-cd services/api
+cd backend/api
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -98,11 +110,11 @@ APP_ENV=development LOCAL_MOCK_AUTH_ENABLED=true AI_SERVICE_URL=http://127.0.0.1
 4. Start Web Admin:
 
 ```sh
-cd apps/web-admin
-./node_modules/.bin/next dev --hostname 127.0.0.1 --port 3000
+cd web
+flutter run -d chrome --web-hostname 127.0.0.1 --web-port 3000 --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
-Open `http://127.0.0.1:3000/login` and use:
+Open `http://127.0.0.1:3000` and use:
 
 - `owner@example.com` / `password` for `super_admin`
 - `agent@example.com` / `password` for `agent`
@@ -110,7 +122,7 @@ Open `http://127.0.0.1:3000/login` and use:
 5. Run Mobile if available:
 
 ```sh
-cd apps/mobile
+cd mobile
 flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
@@ -403,12 +415,12 @@ The AI Core powers the automation layer.
 | Vector Database | ChromaDB |
 | Backend API | FastAPI |
 | Database and Auth | Supabase: PostgreSQL, Realtime, Auth |
-| Web Frontend | Next.js + Tailwind CSS |
+| Web Frontend | Flutter Web |
 | Mobile App | Flutter |
 | Email Integration | Mailgun or SendGrid Webhook/API |
 | Facebook Integration | Meta Messenger Platform API Webhook |
 | Push Notification | Firebase Cloud Messaging |
-| Hosting | Railway or Render for backend, Vercel for web |
+| Hosting | Railway or Render for backend, static Flutter web hosting for web |
 
 ## Project Timeline
 
@@ -504,13 +516,13 @@ The final project should demonstrate this complete flow:
 Run the final verification suite:
 
 ```sh
-cd services/api && .venv/bin/python -m pytest
-cd services/ai && .venv/bin/python -m pytest
-cd apps/web-admin && ./node_modules/.bin/next lint
-cd apps/web-admin && ./node_modules/.bin/vitest run
-cd apps/web-admin && ./node_modules/.bin/next build
-cd apps/mobile && flutter analyze
-cd apps/mobile && flutter test
+cd backend/api && .venv/bin/python -m pytest
+cd backend/ai && .venv/bin/python -m pytest
+cd web && flutter analyze
+cd web && flutter test
+cd web && flutter build web
+cd mobile && flutter analyze
+cd mobile && flutter test
 ```
 
 ## Repository Information

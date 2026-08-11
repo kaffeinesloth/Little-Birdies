@@ -7,7 +7,7 @@ This demo runs without real Supabase, Facebook, Email, FCM, or LLM credentials. 
 Terminal 1:
 
 ```sh
-cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/services/ai"
+cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/backend/ai"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -47,7 +47,7 @@ curl -X POST http://127.0.0.1:8001/rag/answer \
 Terminal 2:
 
 ```sh
-cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/services/api"
+cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/backend/api"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -98,14 +98,13 @@ curl "http://127.0.0.1:8000/tickets?limit=50&offset=0" \
 Terminal 3:
 
 ```sh
-cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/apps/web-admin"
-PATH=/Users/kafe/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/next dev --hostname 127.0.0.1 --port 3000
+cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/web"
+flutter run -d chrome --web-hostname 127.0.0.1 --web-port 3000 --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
 Open:
 
-- Web Admin: `http://127.0.0.1:3000/login`
-- Widget demo: `http://127.0.0.1:3000/widget-demo`
+- Web Admin: `http://127.0.0.1:3000`
 - Unified Inbox: `http://127.0.0.1:3000/inbox`
 
 Mock login:
@@ -128,7 +127,7 @@ Web demo flow:
 Terminal 4:
 
 ```sh
-cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/apps/mobile"
+cd "/Users/kafe/Desktop/AI Integrated Stack/Little-Birdies/mobile"
 flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 

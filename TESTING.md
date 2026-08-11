@@ -2,10 +2,12 @@
 
 All tests are designed to run without real Supabase, Facebook, Email, FCM, OpenAI, or Gemini credentials.
 
+The full local stack can be started with `./start.sh` on macOS/Linux or `.\start.cmd` on Windows.
+
 ## Backend API
 
 ```sh
-cd services/api
+cd backend/api
 .venv/bin/python -m pytest
 ```
 
@@ -20,7 +22,7 @@ Covers:
 ## AI Service
 
 ```sh
-cd services/ai
+cd backend/ai
 .venv/bin/python -m pytest
 ```
 
@@ -33,23 +35,23 @@ Covers:
 ## Web Admin
 
 ```sh
-cd apps/web-admin
-PATH=/Users/kafe/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/next lint
-PATH=/Users/kafe/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/vitest run
-PATH=/Users/kafe/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH ./node_modules/.bin/next build
+cd web
+flutter analyze
+flutter test
+flutter build web
 ```
 
 Covers:
 
 - Role-based navigation visibility
 - Unified Inbox mock ticket rendering
-- Message composer error state
-- Knowledge Base upload validation
+- Dashboard, Knowledge Base, Staff, Channels, and Widget Demo rendering
+- Responsive admin shell behavior
 
 ## Mobile
 
 ```sh
-cd apps/mobile
+cd mobile
 flutter analyze
 flutter test
 ```

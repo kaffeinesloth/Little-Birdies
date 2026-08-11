@@ -21,10 +21,10 @@ Run the most relevant checks for the area you changed:
 
 ## Monorepo Layout
 
-- `apps/web-admin`: Next.js Web Admin Dashboard and chat widget demo.
-- `apps/mobile`: Flutter Mobile App for staff.
-- `services/api`: FastAPI backend and orchestration API.
-- `services/ai`: FastAPI AI microservice for classification, RAG, and document processing.
+- `web`: Flutter Web Admin Dashboard and chat widget demo.
+- `mobile`: Flutter Mobile App for staff.
+- `backend/api`: FastAPI backend and orchestration API.
+- `backend/ai`: FastAPI AI microservice for classification, RAG, and document processing.
 - `packages/shared`: Shared API contracts, schemas, and documentation.
 - `infra`: Supabase migrations and deployment notes.
 - `docs`: Architecture and API documentation.

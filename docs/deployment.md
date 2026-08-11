@@ -3,10 +3,10 @@
 This guide deploys Smart Helpdesk AI as separate services:
 
 - Supabase for Auth, Postgres, Realtime, and optional file storage
-- `services/ai` as a FastAPI AI microservice on Railway or Render
-- `services/api` as a FastAPI backend on Railway or Render
-- `apps/web-admin` on Vercel
-- `apps/mobile` as Flutter builds for Android/iOS
+- `backend/ai` as a FastAPI AI microservice on Railway or Render
+- `backend/api` as a FastAPI backend on Railway or Render
+- `web` as a static Flutter web build
+- `mobile` as Flutter builds for Android/iOS
 
 No deploy config files are required for local development. Use provider dashboards or service-specific root directories when creating deployments.
 
@@ -47,7 +47,7 @@ For early production, use a persistent disk attached to the AI service:
 
 For a separately hosted ChromaDB:
 
-- Deploy a ChromaDB server in the same region as `services/ai`
+- Deploy a ChromaDB server in the same region as `backend/ai`
 - Set `CHROMA_DB_HOST=<internal-host-or-private-url>`
 - Restrict network access to the AI service
 
@@ -58,7 +58,7 @@ Do not use ephemeral filesystem storage for production Knowledge Base embeddings
 Service root directory:
 
 ```text
-services/ai
+backend/ai
 ```
 
 Build command:
@@ -97,7 +97,7 @@ AI environment variables:
 Service root directory:
 
 ```text
-services/api
+backend/api
 ```
 
 Build command:
@@ -156,51 +156,44 @@ Public webhook URLs:
 - Mailgun: `https://<api-domain>/webhooks/email?provider=mailgun`
 - SendGrid: `https://<api-domain>/webhooks/email?provider=sendgrid`
 
-## Web Admin On Vercel
+## Flutter Web Admin
 
 Project root directory:
 
 ```text
-apps/web-admin
-```
-
-Install command:
-
-```sh
-pnpm install
+web
 ```
 
 Build command:
 
 ```sh
-pnpm build
+flutter pub get
+flutter build web --release --dart-define=API_BASE_URL=https://<api-domain>
 ```
 
 Output:
 
 ```text
-.next
+web/build/web
 ```
+
+Deploy `web/build/web` to any static web host, including Firebase Hosting, Netlify, Cloudflare Pages, S3/CloudFront, or Vercel static output.
 
 Web environment variables:
 
-- `NEXT_PUBLIC_API_BASE_URL=https://<api-domain>`
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `NEXT_PUBLIC_MOCK_ROLE` should be unset in production
+- `API_BASE_URL=https://<api-domain>` passed with `--dart-define`
 
 Production notes:
 
-- Disable local mock auth by configuring Supabase env vars.
-- Add the Vercel domain to API and AI `CORS_ALLOWED_ORIGINS`.
-- Configure custom domain and HTTPS in Vercel.
+- Add the web domain to API and AI `CORS_ALLOWED_ORIGINS`.
+- Configure custom domain and HTTPS in the static host.
 
 ## Flutter Builds
 
 Android:
 
 ```sh
-cd apps/mobile
+cd mobile
 flutter build apk --release --dart-define=API_BASE_URL=https://<api-domain>
 ```
 
@@ -213,7 +206,7 @@ flutter build appbundle --release --dart-define=API_BASE_URL=https://<api-domain
 iOS:
 
 ```sh
-cd apps/mobile
+cd mobile
 flutter build ios --release --dart-define=API_BASE_URL=https://<api-domain>
 ```
 
@@ -235,7 +228,7 @@ Production notes:
 
 - [ ] Supabase RLS reviewed for every table.
 - [ ] Supabase Auth users created and matching `public.users` profiles inserted.
-- [ ] Service secrets configured in Railway/Render/Vercel dashboards or a managed secret store.
+- [ ] Service secrets configured in Railway/Render/static-host dashboards or a managed secret store.
 - [ ] `LOCAL_MOCK_AUTH_ENABLED=false` in production API.
 - [ ] Facebook webhook URL and verify token configured.
 - [ ] Mailgun or SendGrid inbound webhook URL configured.
@@ -252,7 +245,7 @@ Production notes:
 Ready for staging once external services are configured:
 
 - API and AI expose `/health`.
-- Web Admin builds with Next.js.
+- Web Admin builds with Flutter Web.
 - Mobile builds can target the API via `--dart-define=API_BASE_URL`.
 - Local mock modes are documented and can be disabled for production.
 
