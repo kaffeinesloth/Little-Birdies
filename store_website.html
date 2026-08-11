@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SportGear Boutique - Trang Web Bán Hàng Mock</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        .chat-widget-window {
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.15), 0 0 20px rgba(59, 130, 246, 0.15);
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col antialiased">
+
+    <!-- Store Website Header Navigation -->
+    <header
+        class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+        <div class="flex items-center gap-3">
+            <div
+                class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center font-black text-white text-lg shadow-md">
+                SG
+            </div>
+            <div>
+                <h1 class="font-extrabold text-lg tracking-tight text-slate-900">SportGear Boutique</h1>
+                <p class="text-xs text-slate-500">Trang Web Bán Hàng Độc Lập (Standalone Mock Shop)</p>
+            </div>
+        </div>
+
+        <nav class="hidden md:flex items-center gap-6 text-sm text-slate-600 font-medium">
+            <a href="#" class="hover:text-blue-600 transition-all text-blue-600 font-semibold">Trang Chủ</a>
+            <a href="#" class="hover:text-blue-600 transition-all">Sản Phẩm Nam</a>
+            <a href="#" class="hover:text-blue-600 transition-all">Sản Phẩm Nữ</a>
+            <a href="#" class="hover:text-blue-600 transition-all">Chính Sách Đổi Trả</a>
+        </nav>
+
+        <div class="flex items-center gap-3">
+            <span
+                class="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-semibold flex items-center gap-1.5 shadow-sm">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span> Live Broadcast Connected
+            </span>
+        </div>
+    </header>
+
+    <!-- Main Store Content Mockup -->
+    <main class="flex-1 p-6 max-w-6xl w-full mx-auto grid grid-cols-1 md:grid-cols-12 gap-8 my-4">
+
+        <!-- Product Image Gallery -->
+        <div class="md:col-span-6 flex flex-col gap-4">
+            <div
+                class="bg-white border border-slate-200 rounded-3xl p-8 flex items-center justify-center min-h-[380px] shadow-sm relative overflow-hidden group">
+                <div class="absolute inset-0 bg-gradient-to-tr from-blue-50 to-transparent"></div>
+                <i
+                    class="fa-solid fa-shirt text-9xl text-blue-600/80 group-hover:scale-110 transition-transform duration-500"></i>
+                <span
+                    class="absolute top-4 left-4 bg-rose-600 text-white font-bold text-xs px-3 py-1 rounded-full shadow-sm">BEST
+                    SELLER</span>
+            </div>
+        </div>
+
+        <!-- Product Purchase Information -->
+        <div class="md:col-span-6 flex flex-col justify-between gap-6">
+            <div>
+                <div class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">BST Thể Thao 2026</div>
+                <h2 class="text-2xl font-extrabold text-slate-900 mb-2">Áo Polo Thể Thao Pro-Fit Co Giãn 4 Chiều</h2>
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="text-2xl font-extrabold text-blue-600">350.000đ</span>
+                    <span class="text-sm text-slate-400 line-through">450.000đ</span>
+                    <span class="text-xs bg-rose-100 text-rose-700 font-bold px-2 py-0.5 rounded">-22%</span>
+                </div>
+                <p class="text-xs text-slate-600 leading-relaxed mb-6">
+                    Chất liệu vải thể thao cao cấp thoáng khí, thấm hút mồ hôi cực tốt. Phù hợp cho tập luyện gym, chạy
+                    bộ, tennis hoặc mặc đi chơi hằng ngày.
+                </p>
+
+                <!-- Colors & Sizes Mock -->
+                <div class="space-y-3 mb-6">
+                    <div class="text-xs font-semibold text-slate-700">Kích thước:</div>
+                    <div class="flex gap-2">
+                        <button
+                            class="w-10 h-10 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:border-blue-600 shadow-sm">M</button>
+                        <button
+                            class="w-10 h-10 rounded-xl bg-blue-600 text-xs font-bold text-white shadow-md">L</button>
+                        <button
+                            class="w-10 h-10 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:border-blue-600 shadow-sm">XL</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3">
+                <button
+                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-2xl shadow-md transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-cart-shopping"></i> Mua Ngay
+                </button>
+                <button onclick="toggleChatWidget()"
+                    class="bg-white hover:bg-slate-50 text-slate-800 font-semibold px-5 py-3 rounded-2xl border border-slate-300 flex items-center gap-2 transition-all shadow-sm">
+                    <i class="fa-solid fa-comments text-blue-600"></i> Hỏi Tư Vấn
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- FLOATING LIVE CHAT WIDGET POPUP (BOTTOM RIGHT) -->
+    <div id="chat-widget-popup"
+        class="chat-widget-window fixed bottom-6 right-6 w-96 max-w-[90vw] h-[520px] bg-white border border-slate-200 rounded-3xl flex flex-col overflow-hidden z-50 transition-all duration-300 shadow-2xl">
+
+        <!-- Chat Header -->
+        <div class="bg-blue-600 p-4 text-white flex items-center justify-between shadow-sm">
+            <div class="flex items-center gap-3">
+                <div
+                    class="w-9 h-9 rounded-full bg-white text-blue-600 flex items-center justify-center font-bold text-xs shadow">
+                    🤖
+                </div>
+                <div>
+                    <div class="font-bold text-xs text-white">Smart Helpdesk AI Assistant</div>
+                    <div class="text-[10px] text-blue-100 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Trực tuyến 24/7
+                        (Broadcast Live)
+                    </div>
+                </div>
+            </div>
+            <button onclick="toggleChatWidget()" class="text-white/80 hover:text-white p-1">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <!-- Messages Area -->
+        <div id="store-chat-box" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs bg-slate-50/50">
+            <div class="flex gap-2">
+                <div
+                    class="w-6 h-6 rounded-full bg-blue-600 flex-shrink-0 flex items-center justify-center text-[10px] text-white">
+                    🤖</div>
+                <div
+                    class="bg-white border border-slate-200 rounded-2xl rounded-tl-none p-3 text-slate-800 max-w-[85%] shadow-sm">
+                    Xin chào! Em là AI tư vấn tự động của shop. Anh/chị cần hỏi thêm thông tin gì về sản phẩm hay chính
+                    sách ạ?
+                </div>
+            </div>
+        </div>
+
+        <!-- Presets Buttons -->
+        <div class="p-2 bg-slate-50 border-t border-slate-200 flex flex-col gap-1">
+            <div class="text-[10px] font-semibold text-slate-500 px-1">Bấm hỏi nhanh:</div>
+            <div class="grid grid-cols-2 gap-1.5">
+                <button onclick="sendPreset(1)"
+                    class="bg-white hover:bg-blue-50 text-blue-600 border border-slate-200 p-1.5 rounded-lg text-left text-[10px] font-medium truncate shadow-sm">
+                    1. Hỏi freeship 500k
+                </button>
+                <button onclick="sendPreset(2)"
+                    class="bg-white hover:bg-rose-50 text-rose-600 border border-slate-200 p-1.5 rounded-lg text-left text-[10px] font-medium truncate shadow-sm">
+                    2. Gửi Khiếu Nại
+                </button>
+            </div>
+        </div>
+
+        <!-- Chat Input Form -->
+        <div class="p-3 bg-white border-t border-slate-200 flex gap-2">
+            <input id="store-chat-input" type="text" placeholder="Nhập tin nhắn..."
+                onkeypress="if(event.key==='Enter') sendStoreMsg()"
+                class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-600">
+            <button onclick="sendStoreMsg()"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Floating Chat Trigger Button (If Widget Closed) -->
+    <button onclick="toggleChatWidget()"
+        class="fixed bottom-6 right-6 w-14 h-14 bg-blue-600 text-white rounded-full flex items-center justify-center text-xl shadow-2xl hover:scale-110 transition-all z-30">
+        <i class="fa-solid fa-comment-dots"></i>
+    </button>
+
+    <!-- BroadcastChannel Realtime Sync JS -->
+    <script>
+        const channel = new BroadcastChannel('smart_helpdesk_omnichannel');
+
+        function toggleChatWidget() {
+            const popup = document.getElementById('chat-widget-popup');
+            popup.classList.toggle('hidden');
+        }
+
+        function appendMessage(text, isAi = false, senderName = null) {
+            const box = document.getElementById('store-chat-box');
+            const div = document.createElement('div');
+            div.className = 'flex gap-2 ' + (isAi || senderName ? '' : 'justify-end');
+
+            if (isAi) {
+                div.innerHTML = `
+                    <div class="w-6 h-6 rounded-full bg-blue-600 flex-shrink-0 flex items-center justify-center text-[10px] text-white">🤖</div>
+                    <div class="bg-white border border-blue-200 rounded-2xl rounded-tl-none p-3 text-slate-800 max-w-[85%] shadow-sm">
+                        ${text}
+                    </div>
+                `;
+            } else if (senderName) {
+                div.innerHTML = `
+                    <div class="w-6 h-6 rounded-full bg-indigo-600 flex-shrink-0 flex items-center justify-center text-[10px] text-white"><i class="fa-solid fa-user-shield"></i></div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-2xl rounded-tl-none p-3 text-slate-900 max-w-[85%] shadow-sm">
+                        <div class="text-[9px] font-bold text-blue-700 mb-0.5">${senderName}</div>
+                        <div>${text}</div>
+                    </div>
+                `;
+            } else {
+                div.innerHTML = `
+                    <div class="bg-blue-600 text-white rounded-2xl rounded-tr-none p-3 max-w-[85%] shadow-sm">
+                        ${text}
+                    </div>
+                `;
+            }
+
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function sendStoreMsg() {
+            const input = document.getElementById('store-chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendMessage(text, false);
+            input.value = '';
+
+            channel.postMessage({
+                type: 'CUSTOMER_MESSAGE',
+                sender: 'Khách Hàng (Website)',
+                text: text,
+                channel: 'web'
+            });
+        }
+
+        function sendPreset(id) {
+            if (id === 1) {
+                const text = "Shop ơi, đơn 500k có được freeship không ạ?";
+                appendMessage(text, false);
+                channel.postMessage({ type: 'CUSTOMER_MESSAGE', sender: 'Khách Hàng (Website)', text: text, channel: 'web', preset: 1 });
+            } else {
+                const text = "Sản phẩm bị rách rồi, shop làm ăn kiểu gì thế?! Xử lý ngay!";
+                appendMessage(text, false);
+                channel.postMessage({ type: 'CUSTOMER_MESSAGE', sender: 'Khách Hàng (Website)', text: text, channel: 'web', preset: 2 });
+            }
+        }
+
+        channel.onmessage = (event) => {
+            const data = event.data;
+            if (data.type === 'STAFF_REPLY' || data.type === 'ADMIN_REPLY' || data.type === 'AI_REPLY') {
+                appendMessage(data.text, data.type === 'AI_REPLY', data.senderName);
+            }
+        };
+    </script>
+</body>
+
+</html>
