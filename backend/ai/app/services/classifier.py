@@ -69,7 +69,7 @@ def _classify_with_openai(message_text: str, settings: Settings) -> Classificati
         "https://api.openai.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {settings.openai_api_key}"},
         json={
-            "model": "gpt-4o-mini",
+            "model": settings.openai_chat_model,
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
@@ -86,7 +86,7 @@ def _classify_with_openai(message_text: str, settings: Settings) -> Classificati
 
 def _classify_with_gemini(message_text: str, settings: Settings) -> ClassificationResponse:
     response = httpx.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent",
         params={"key": settings.gemini_api_key},
         json={
             "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},

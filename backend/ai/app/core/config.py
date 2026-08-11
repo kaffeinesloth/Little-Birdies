@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     gemini_api_key: str | None = None
+    openai_chat_model: str = "gpt-4o-mini"
+    gemini_model: str = "gemini-1.5-flash"
     embedding_model: str = "text-embedding-3-small"
     chroma_db_path: str = "./chroma"
     chroma_db_host: str | None = None

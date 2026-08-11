@@ -85,7 +85,7 @@ class HTTPContextAnswerer:
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {settings.openai_api_key}"},
             json={
-                "model": "gpt-4o-mini",
+                "model": settings.openai_chat_model,
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
                 "messages": [
@@ -101,7 +101,7 @@ class HTTPContextAnswerer:
 
     def _answer_with_gemini(self, *, question: str, context: str, settings: Settings) -> str:
         response = httpx.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+            f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent",
             params={"key": settings.gemini_api_key},
             json={
                 "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},

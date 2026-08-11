@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const SmartHelpdeskWebApp());
@@ -17,7 +20,7 @@ class _SmartHelpdeskWebAppState extends State<SmartHelpdeskWebApp> {
   void _signIn(UserRole role) {
     setState(() {
       _session = UserSession(
-        id: role == UserRole.superAdmin ? 'owner-demo' : 'agent-demo',
+        id: role == UserRole.superAdmin ? ownerDemoId : agentDemoId,
         email: role == UserRole.superAdmin
             ? 'owner@example.com'
             : 'agent@example.com',
@@ -178,6 +181,7 @@ class AdminShell extends StatefulWidget {
 }
 
 class _AdminShellState extends State<AdminShell> {
+  final _api = SmartHelpdeskWebApiClient();
   int _selectedIndex = 0;
 
   List<NavItem> get _items {
@@ -252,8 +256,8 @@ class _AdminShellState extends State<AdminShell> {
       'Knowledge Base' => const KnowledgeBasePage(),
       'Staff' => const StaffPage(),
       'Channels' => const ChannelsPage(),
-      'Widget Demo' => const WidgetDemoPage(),
-      _ => const InboxPage(),
+      'Widget Demo' => WidgetDemoPage(api: _api),
+      _ => InboxPage(api: _api, session: widget.session),
     };
   }
 }
@@ -371,7 +375,10 @@ class _MobileTopBar extends StatelessWidget {
 }
 
 class InboxPage extends StatefulWidget {
-  const InboxPage({super.key});
+  const InboxPage({super.key, required this.api, required this.session});
+
+  final SmartHelpdeskWebApiClient api;
+  final UserSession session;
 
   @override
   State<InboxPage> createState() => _InboxPageState();
@@ -380,11 +387,53 @@ class InboxPage extends StatefulWidget {
 class _InboxPageState extends State<InboxPage> {
   TicketStatus? _status;
   ChannelType? _channel;
-  Ticket? _selected = DemoData.tickets.first;
+  Ticket? _selected;
+  List<Ticket> _tickets = DemoData.tickets;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTickets();
+  }
+
+  Future<void> _loadTickets() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final tickets = await widget.api.fetchTickets(widget.session.accessToken);
+      if (!mounted) return;
+      setState(() {
+        _tickets = tickets.isEmpty ? DemoData.tickets : tickets;
+        _selected = _tickets.isEmpty ? null : _tickets.first;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _tickets = DemoData.tickets;
+        _selected = DemoData.tickets.first;
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _replaceSelectedTicket(Ticket ticket) {
+    setState(() {
+      _selected = ticket;
+      _tickets = [
+        for (final item in _tickets) item.id == ticket.id ? ticket : item,
+      ];
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final tickets = DemoData.tickets.where((ticket) {
+    final tickets = _tickets.where((ticket) {
       return (_status == null || ticket.status == _status) &&
           (_channel == null || ticket.source == _channel);
     }).toList();
@@ -398,6 +447,13 @@ class _InboxPageState extends State<InboxPage> {
           final list = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_error != null) ...[
+                InlineNotice(
+                  icon: Icons.cloud_off,
+                  text: 'Using local demo data. Backend said: $_error',
+                ),
+                const SizedBox(height: 12),
+              ],
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -423,22 +479,34 @@ class _InboxPageState extends State<InboxPage> {
                         _channel = _channel == channel ? null : channel;
                       }),
                     ),
+                  IconButton.outlined(
+                    tooltip: 'Refresh tickets',
+                    onPressed: _loading ? null : _loadTickets,
+                    icon: _loading
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
               Expanded(
-                child: ListView.separated(
-                  itemCount: tickets.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final ticket = tickets[index];
-                    return TicketCard(
-                      ticket: ticket,
-                      selected: _selected?.id == ticket.id,
-                      onTap: () => setState(() => _selected = ticket),
-                    );
-                  },
-                ),
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ListView.separated(
+                        itemCount: tickets.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final ticket = tickets[index];
+                          return TicketCard(
+                            ticket: ticket,
+                            selected: _selected?.id == ticket.id,
+                            onTap: () => setState(() => _selected = ticket),
+                          );
+                        },
+                      ),
               ),
             ],
           );
@@ -448,7 +516,14 @@ class _InboxPageState extends State<InboxPage> {
             children: [
               SizedBox(width: 420, child: list),
               const SizedBox(width: 16),
-              Expanded(child: TicketDetailPanel(ticket: _selected)),
+              Expanded(
+                child: TicketDetailPanel(
+                  api: widget.api,
+                  session: widget.session,
+                  ticket: _selected,
+                  onTicketChanged: _replaceSelectedTicket,
+                ),
+              ),
             ],
           );
         },
@@ -515,16 +590,155 @@ class TicketCard extends StatelessWidget {
 }
 
 class TicketDetailPanel extends StatelessWidget {
-  const TicketDetailPanel({super.key, required this.ticket});
+  const TicketDetailPanel({
+    super.key,
+    required this.api,
+    required this.session,
+    required this.ticket,
+    required this.onTicketChanged,
+  });
 
+  final SmartHelpdeskWebApiClient api;
+  final UserSession session;
   final Ticket? ticket;
+  final ValueChanged<Ticket> onTicketChanged;
 
   @override
   Widget build(BuildContext context) {
     if (ticket == null) {
       return const EmptyPanel(icon: Icons.inbox, title: 'Select a ticket');
     }
-    final messages = DemoData.messages[ticket!.id] ?? const <MessageItem>[];
+    return TicketDetailBody(
+      api: api,
+      session: session,
+      ticket: ticket!,
+      onTicketChanged: onTicketChanged,
+    );
+  }
+}
+
+class TicketDetailBody extends StatefulWidget {
+  const TicketDetailBody({
+    super.key,
+    required this.api,
+    required this.session,
+    required this.ticket,
+    required this.onTicketChanged,
+  });
+
+  final SmartHelpdeskWebApiClient api;
+  final UserSession session;
+  final Ticket ticket;
+  final ValueChanged<Ticket> onTicketChanged;
+
+  @override
+  State<TicketDetailBody> createState() => _TicketDetailBodyState();
+}
+
+class _TicketDetailBodyState extends State<TicketDetailBody> {
+  final _reply = TextEditingController();
+  List<MessageItem> _messages = const <MessageItem>[];
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+  }
+
+  @override
+  void didUpdateWidget(covariant TicketDetailBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ticket.id != widget.ticket.id) {
+      _reply.clear();
+      _loadMessages();
+    }
+  }
+
+  @override
+  void dispose() {
+    _reply.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMessages() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final messages = await widget.api.fetchMessages(
+        widget.ticket.id,
+        widget.session.accessToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _messages = messages.isEmpty
+            ? DemoData.messages[widget.ticket.id] ?? const <MessageItem>[]
+            : messages;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _messages =
+            DemoData.messages[widget.ticket.id] ?? const <MessageItem>[];
+      });
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _sendReply() async {
+    final content = _reply.text.trim();
+    if (content.isEmpty) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final message = await widget.api.sendReply(
+        widget.ticket.id,
+        content,
+        widget.session.accessToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _messages = [..._messages, message];
+        _reply.clear();
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _resolve() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.api.resolveTicket(
+        widget.ticket,
+        widget.session.accessToken,
+      );
+      if (!mounted) return;
+      widget.onTicketChanged(updated);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return SurfacePanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -535,63 +749,75 @@ class TicketDetailPanel extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(ticket!.customerName,
+                    Text(widget.ticket.customerName,
                         style: Theme.of(context)
                             .textTheme
                             .titleLarge
                             ?.copyWith(fontWeight: FontWeight.w800)),
-                    Text('${ticket!.id} · ${ticket!.summary}'),
+                    Text('${widget.ticket.id} · ${widget.ticket.summary}'),
                   ],
                 ),
               ),
               FilledButton.icon(
-                onPressed: () {},
+                onPressed:
+                    _saving || widget.ticket.status == TicketStatus.resolved
+                        ? null
+                        : _resolve,
                 icon: const Icon(Icons.check),
                 label: const Text('Resolve'),
               ),
             ],
           ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            InlineNotice(icon: Icons.error_outline, text: _error!),
+          ],
           const SizedBox(height: 18),
           Expanded(
-            child: ListView.separated(
-              itemCount: messages.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final message = messages[index];
-                final human = message.senderType == 'human';
-                return Align(
-                  alignment:
-                      human ? Alignment.centerRight : Alignment.centerLeft,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: human
-                            ? const Color(0xff0f766e)
-                            : const Color(0xfff1f5f9),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          message.content,
-                          style: TextStyle(
-                            color:
-                                human ? Colors.white : const Color(0xff0f172a),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.separated(
+                    itemCount: _messages.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final message = _messages[index];
+                      final human = message.senderType == 'human';
+                      return Align(
+                        alignment: human
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 560),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: human
+                                  ? const Color(0xff0f766e)
+                                  : const Color(0xfff1f5f9),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Text(
+                                message.content,
+                                style: TextStyle(
+                                  color: human
+                                      ? Colors.white
+                                      : const Color(0xff0f172a),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
           const SizedBox(height: 14),
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: TextField(
+                  controller: _reply,
                   decoration: InputDecoration(
                     hintText: 'Write a reply',
                     border: OutlineInputBorder(),
@@ -601,8 +827,13 @@ class TicketDetailPanel extends StatelessWidget {
               const SizedBox(width: 8),
               IconButton.filled(
                 tooltip: 'Send',
-                onPressed: () {},
-                icon: const Icon(Icons.send),
+                onPressed: _saving ? null : _sendReply,
+                icon: _saving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.send),
               ),
             ],
           ),
@@ -819,8 +1050,79 @@ class ChannelsPage extends StatelessWidget {
   }
 }
 
-class WidgetDemoPage extends StatelessWidget {
-  const WidgetDemoPage({super.key});
+class WidgetDemoPage extends StatefulWidget {
+  const WidgetDemoPage({super.key, required this.api});
+
+  final SmartHelpdeskWebApiClient api;
+
+  @override
+  State<WidgetDemoPage> createState() => _WidgetDemoPageState();
+}
+
+class _WidgetDemoPageState extends State<WidgetDemoPage> {
+  final _message = TextEditingController(text: 'How long is the warranty?');
+  final _senderId = 'web-demo-customer';
+  final List<WidgetChatMessage> _messages = [
+    const WidgetChatMessage(
+      content: 'Hi, how long is the headphone warranty?',
+      isCustomer: true,
+    ),
+    const WidgetChatMessage(
+      content:
+          'Most headphones include a 12-month warranty. I can connect you with an agent for order-specific help.',
+      isCustomer: false,
+    ),
+  ];
+  bool _sending = false;
+  String? _status;
+
+  @override
+  void dispose() {
+    _message.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final content = _message.text.trim();
+    if (content.isEmpty) return;
+    setState(() {
+      _sending = true;
+      _status = null;
+      _messages.add(WidgetChatMessage(content: content, isCustomer: true));
+      _message.clear();
+    });
+    try {
+      final result = await widget.api.sendWebMessage(
+        senderId: _senderId,
+        customerName: 'Demo Customer',
+        content: content,
+      );
+      final bot = result.botMessage;
+      if (!mounted) return;
+      setState(() {
+        if (bot != null) {
+          _messages
+              .add(WidgetChatMessage(content: bot.content, isCustomer: false));
+        }
+        _status =
+            '${result.action} · ${result.intent} · ticket ${result.ticketId}';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          WidgetChatMessage(
+            content:
+                'The local API is not reachable. Start the stack with ./start.sh.',
+            isCustomer: false,
+          ),
+        );
+        _status = error.message;
+      });
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -842,28 +1144,29 @@ class WidgetDemoPage extends StatelessWidget {
                   subtitle: Text('Usually replies in a few seconds'),
                 ),
                 const Divider(),
-                const Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.end,
+                Expanded(
+                  child: ListView(
                     children: [
-                      ChatBubble(
-                        text: 'Hi, how long is the headphone warranty?',
-                        alignRight: true,
-                      ),
-                      ChatBubble(
-                        text:
-                            'Most headphones include a 12-month warranty. I can connect you with an agent for order-specific help.',
-                        alignRight: false,
-                      ),
+                      for (final message in _messages)
+                        ChatBubble(
+                          text: message.content,
+                          alignRight: message.isCustomer,
+                        ),
                     ],
                   ),
                 ),
+                if (_status != null) ...[
+                  const SizedBox(height: 10),
+                  InlineNotice(icon: Icons.info_outline, text: _status!),
+                ],
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: TextField(
-                        decoration: InputDecoration(
+                        controller: _message,
+                        onSubmitted: (_) => _sending ? null : _send(),
+                        decoration: const InputDecoration(
                           hintText: 'Ask a question',
                           border: OutlineInputBorder(),
                         ),
@@ -872,8 +1175,13 @@ class WidgetDemoPage extends StatelessWidget {
                     const SizedBox(width: 8),
                     IconButton.filled(
                       tooltip: 'Send',
-                      onPressed: () {},
-                      icon: const Icon(Icons.send),
+                      onPressed: _sending ? null : _send,
+                      icon: _sending
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send),
                     ),
                   ],
                 ),
@@ -1050,6 +1358,34 @@ class ChatBubble extends StatelessWidget {
   }
 }
 
+class InlineNotice extends StatelessWidget {
+  const InlineNotice({super.key, required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xfffffbeb),
+        border: Border.all(color: const Color(0xfff59e0b)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          children: [
+            Icon(icon, color: const Color(0xff92400e), size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(text)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class EmptyPanel extends StatelessWidget {
   const EmptyPanel({super.key, required this.icon, required this.title});
 
@@ -1123,6 +1459,10 @@ class UserSession {
   final String email;
   final String fullName;
   final UserRole role;
+
+  String get accessToken {
+    return 'mock:$id:$email:${roleLabel(role)}:online';
+  }
 }
 
 class NavItem {
@@ -1148,6 +1488,17 @@ class Ticket {
   final TicketStatus status;
   final String intent;
   final String summary;
+
+  Ticket copyWith({TicketStatus? status, String? summary}) {
+    return Ticket(
+      id: id,
+      customerName: customerName,
+      source: source,
+      status: status ?? this.status,
+      intent: intent,
+      summary: summary ?? this.summary,
+    );
+  }
 }
 
 class MessageItem {
@@ -1158,6 +1509,27 @@ class MessageItem {
 
   final String senderType;
   final String content;
+}
+
+class WidgetChatMessage {
+  const WidgetChatMessage({required this.content, required this.isCustomer});
+
+  final String content;
+  final bool isCustomer;
+}
+
+class WebMessageResult {
+  const WebMessageResult({
+    required this.ticketId,
+    required this.action,
+    required this.intent,
+    this.botMessage,
+  });
+
+  final String ticketId;
+  final String action;
+  final String intent;
+  final MessageItem? botMessage;
 }
 
 class KnowledgeDocument {
@@ -1331,6 +1703,156 @@ class DemoData {
   ];
 }
 
+class SmartHelpdeskWebApiClient {
+  SmartHelpdeskWebApiClient({
+    String? baseUrl,
+    http.Client? httpClient,
+  })  : baseUrl = baseUrl ??
+            const String.fromEnvironment(
+              'API_BASE_URL',
+              defaultValue: 'http://localhost:8000',
+            ),
+        _http = httpClient ?? http.Client();
+
+  final String baseUrl;
+  final http.Client _http;
+
+  Future<List<Ticket>> fetchTickets(String accessToken) async {
+    final payload = await _get('/tickets?limit=50&offset=0', accessToken);
+    final items = payload['items'] as List<dynamic>? ?? const <dynamic>[];
+    return [
+      for (final item in items) _ticketFromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  Future<List<MessageItem>> fetchMessages(
+    String ticketId,
+    String accessToken,
+  ) async {
+    final payload = await _get('/tickets/$ticketId/messages', accessToken);
+    final items = payload['items'] as List<dynamic>? ?? const <dynamic>[];
+    return [
+      for (final item in items) _messageFromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  Future<MessageItem> sendReply(
+    String ticketId,
+    String content,
+    String accessToken,
+  ) async {
+    final payload = await _post(
+      '/tickets/$ticketId/messages',
+      accessToken,
+      {'content': content},
+    );
+    return _messageFromJson(payload['message'] as Map<String, dynamic>);
+  }
+
+  Future<Ticket> resolveTicket(Ticket ticket, String accessToken) async {
+    final payload =
+        await _post('/tickets/${ticket.id}/resolve', accessToken, {});
+    return _ticketFromJson(payload);
+  }
+
+  Future<WebMessageResult> sendWebMessage({
+    required String senderId,
+    required String customerName,
+    required String content,
+  }) async {
+    final response = await _http.post(
+      Uri.parse('$baseUrl/webhooks/web-message'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({
+        'sender_id': senderId,
+        'customer_name': customerName,
+        'content': content,
+      }),
+    );
+    final payload = _decode(response);
+    final botPayload = payload['bot_message'];
+    return WebMessageResult(
+      ticketId: ((payload['ticket'] as Map?)?['id'] ?? 'unknown').toString(),
+      action: (payload['action'] ?? 'recorded').toString(),
+      intent: (payload['intent'] ?? 'question').toString(),
+      botMessage: botPayload is Map<String, dynamic>
+          ? _messageFromJson(botPayload)
+          : null,
+    );
+  }
+
+  Future<Map<String, dynamic>> _get(String path, String accessToken) async {
+    final response = await _http.get(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(accessToken),
+    );
+    return _decode(response);
+  }
+
+  Future<Map<String, dynamic>> _post(
+    String path,
+    String accessToken,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await _http.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(accessToken),
+      body: jsonEncode(body),
+    );
+    return _decode(response);
+  }
+
+  Map<String, String> _headers(String accessToken) {
+    return {
+      'authorization': 'Bearer $accessToken',
+      'content-type': 'application/json',
+    };
+  }
+
+  Map<String, dynamic> _decode(http.Response response) {
+    if (response.statusCode >= 400) {
+      throw ApiException(
+        'API ${response.statusCode}: ${response.body.isEmpty ? response.reasonPhrase : response.body}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+}
+
+class ApiException implements Exception {
+  const ApiException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+Ticket _ticketFromJson(Map<String, dynamic> json) {
+  return Ticket(
+    id: json['id']?.toString() ?? '',
+    customerName:
+        (json['customer_name'] ?? json['customerName'] ?? 'Unknown customer')
+            .toString(),
+    source: channelFromValue(json['source']?.toString()),
+    status: ticketStatusFromValue(json['status']?.toString()),
+    intent: (json['intent'] ?? 'question').toString(),
+    summary: (json['summary'] ?? json['last_message_preview'] ?? 'No preview')
+        .toString(),
+  );
+}
+
+MessageItem _messageFromJson(Map<String, dynamic> json) {
+  return MessageItem(
+    senderType:
+        (json['sender_type'] ?? json['senderType'] ?? 'customer').toString(),
+    content: (json['content'] ?? '').toString(),
+  );
+}
+
+const ownerDemoId = '00000000-0000-4000-8000-000000000001';
+const agentDemoId = '00000000-0000-4000-8000-000000000002';
+
 String roleLabel(UserRole role) {
   return switch (role) {
     UserRole.superAdmin => 'super_admin',
@@ -1347,11 +1869,28 @@ String statusLabel(TicketStatus status) {
   };
 }
 
+TicketStatus ticketStatusFromValue(String? value) {
+  return switch (value) {
+    'in_progress' => TicketStatus.inProgress,
+    'pending' => TicketStatus.pending,
+    'resolved' => TicketStatus.resolved,
+    _ => TicketStatus.open,
+  };
+}
+
 String channelLabel(ChannelType channel) {
   return switch (channel) {
     ChannelType.web => 'web',
     ChannelType.facebook => 'facebook',
     ChannelType.email => 'email',
+  };
+}
+
+ChannelType channelFromValue(String? value) {
+  return switch (value) {
+    'facebook' => ChannelType.facebook,
+    'email' => ChannelType.email,
+    _ => ChannelType.web,
   };
 }
 

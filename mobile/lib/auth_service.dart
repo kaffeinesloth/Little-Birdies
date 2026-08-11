@@ -33,10 +33,11 @@ class SupabaseAuthPlaceholder {
       // credentials and package policy are finalized.
     }
     return AuthSession(
-      accessToken:
-          isMockMode ? 'mock-mobile-token' : 'supabase-placeholder-token',
+      accessToken: isMockMode
+          ? 'mock:${role == UserRole.agent ? _agentDemoId : _ownerDemoId}:$email:${role == UserRole.agent ? 'agent' : 'super_admin'}:online'
+          : 'supabase-placeholder-token',
       user: CurrentUser(
-        id: role == UserRole.agent ? 'agent-demo' : 'owner-demo',
+        id: role == UserRole.agent ? _agentDemoId : _ownerDemoId,
         email: email,
         fullName: role == UserRole.agent ? 'Support Agent' : 'Shop Owner',
         role: role,
@@ -46,6 +47,9 @@ class SupabaseAuthPlaceholder {
 
   Future<void> signOut() async {}
 }
+
+const _ownerDemoId = '00000000-0000-4000-8000-000000000001';
+const _agentDemoId = '00000000-0000-4000-8000-000000000002';
 
 class AuthException implements Exception {
   const AuthException(this.message);
