@@ -11,6 +11,18 @@ __pycache__/
 venv/
 env/
 
+# Environment / secrets
+.env
+env
+*.env
+*.key
+*.json
+
+# Python
+__pycache__/
+.venv/
+.venv_gpu/
+
 # Environment variables — KHÔNG commit lên Git
 .env
 backend/.env
