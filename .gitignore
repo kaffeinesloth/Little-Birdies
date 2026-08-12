@@ -17,6 +17,9 @@ env
 *.env
 *.key
 *.json
+!web/package.json
+!web/package-lock.json
+!web/tsconfig.json
 
 # Python
 __pycache__/
@@ -38,3 +41,10 @@ Thumbs.db
 
 # ChromaDB data (nếu chạy local)
 chroma_db/
+
+# Web frontend
+web/node_modules/
+web/.next/
+web/out/
+web/AGENTS.md
+web/CLAUDE.md

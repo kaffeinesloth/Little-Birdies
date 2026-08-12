@@ -1,9 +1,11 @@
 import httpx
+import os
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from core.auth import get_current_user, require_super_admin
-from core.database import get_supabase_client
+from core.database import get_supabase_admin
 from models.domain import APIResponse, MetaResponse, EmbeddingStatus
 
 router = APIRouter()
@@ -12,13 +14,30 @@ ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocume
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE_MB = 10
 
-AI_SERVICE_URL = "http://localhost:8001"
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+STORAGE_BUCKET = "knowledge-base"
+
+
+def _storage_path_from_url(file_url: str) -> str | None:
+    parsed_path = unquote(urlparse(file_url).path)
+    markers = (
+        f"/object/public/{STORAGE_BUCKET}/",
+        f"/object/sign/{STORAGE_BUCKET}/",
+    )
+    for marker in markers:
+        if marker in parsed_path:
+            return parsed_path.split(marker, 1)[1]
+
+    if parsed_path.startswith(f"{STORAGE_BUCKET}/"):
+        return parsed_path[len(STORAGE_BUCKET) + 1:]
+
+    return None
 
 
 @router.get("", response_model=APIResponse)
 def list_documents(current_user: dict = Depends(get_current_user)):
     """Lấy danh sách tài liệu đã upload vào Knowledge Base."""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     result = (
         supabase.table("documents")
@@ -47,8 +66,6 @@ async def upload_document(
     4. Gọi AI service để chunk + embed (bất đồng bộ)
     5. Trả về 202 + document_id
     """
-    import os
-
     # 1. Validate extension
     _, ext = os.path.splitext(file.filename or "")
     if ext.lower() not in ALLOWED_EXTENSIONS:
@@ -66,17 +83,17 @@ async def upload_document(
             detail=f"File vượt quá giới hạn {MAX_FILE_SIZE_MB}MB.",
         )
 
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     # 2. Upload lên Supabase Storage bucket "knowledge-base"
     storage_path = f"knowledge-base/{current_user['id']}/{file.filename}"
     try:
-        supabase.storage.from_("knowledge-base").upload(
+        supabase.storage.from_(STORAGE_BUCKET).upload(
             path=storage_path,
             file=content,
             file_options={"content-type": file.content_type or "application/octet-stream"},
         )
-        file_url = supabase.storage.from_("knowledge-base").get_public_url(storage_path)
+        file_url = supabase.storage.from_(STORAGE_BUCKET).get_public_url(storage_path)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -132,7 +149,7 @@ def delete_document(
     current_user: dict = Depends(require_super_admin),
 ):
     """super_admin xóa tài liệu khỏi Knowledge Base."""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     # Lấy thông tin trước khi xóa (để xóa file trên Storage)
     doc = (
@@ -145,6 +162,16 @@ def delete_document(
 
     if not doc.data:
         raise HTTPException(status_code=404, detail="Tài liệu không tồn tại.")
+
+    storage_path = _storage_path_from_url(doc.data.get("file_url") or "")
+    if storage_path:
+        try:
+            supabase.storage.from_(STORAGE_BUCKET).remove([storage_path])
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Xóa file trên Storage thất bại: {str(e)}",
+            )
 
     # Xóa record trong DB
     supabase.table("documents").delete().eq("id", str(document_id)).execute()

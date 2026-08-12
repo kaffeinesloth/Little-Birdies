@@ -229,6 +229,63 @@ The AI Core powers the automation layer.
 | Facebook Integration | Meta Messenger Platform API Webhook |
 | Hosting | Railway or Render for backend, Vercel for web |
 
+## Run With Docker
+
+Prerequisites:
+
+- Docker Desktop, or Docker Engine with Docker Compose.
+- Supabase and Google AI credentials for full backend and AI functionality.
+
+Quick start:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the real `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, and `GOOGLE_API_KEY` values.
+
+Also set the browser-facing Supabase values:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_publishable_or_anon_key
+```
+
+Before running the app against a new Supabase project:
+
+1. Open Supabase SQL Editor.
+2. Run `backend/supabase_schema.sql`.
+3. Start the app and create your first account from the web login screen.
+4. In Supabase SQL Editor, promote that account:
+
+```sql
+UPDATE public.users
+SET role = 'super_admin', status = 'online'
+WHERE email = 'your-email@example.com';
+```
+
+Build and run all services:
+
+```bash
+docker compose up --build
+```
+
+Open the running services:
+
+- Web dashboard: http://localhost:3000
+- Backend API health: http://localhost:8000
+- Backend API docs: http://localhost:8000/api/docs
+- AI service health: http://localhost:8001/health
+- AI service docs: http://localhost:8001/docs
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+The AI service stores ChromaDB data in a Docker volume named `ai-chroma-data`, so vector data survives container restarts.
+
 ## Project Timeline
 
 | Phase | Duration | Milestones |

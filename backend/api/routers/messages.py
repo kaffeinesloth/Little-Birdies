@@ -1,9 +1,10 @@
 import httpx
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from uuid import UUID
 
 from core.auth import get_current_user
-from core.database import get_supabase_client, get_supabase_admin
+from core.database import get_supabase_admin
 from models.domain import (
     APIResponse, MetaResponse,
     MessageCreate, IncomingMessage,
@@ -12,7 +13,7 @@ from models.domain import (
 
 router = APIRouter()
 
-AI_SERVICE_URL = "http://localhost:8001"  # URL của ai_service
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 
 
 @router.post("/incoming", response_model=APIResponse, status_code=202)
@@ -94,7 +95,7 @@ def send_message(
     Agent hoặc super_admin reply tin nhắn cho khách.
     Tự động gửi về đúng kênh (web realtime / facebook API / email).
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     # Kiểm tra ticket tồn tại
     ticket_result = (

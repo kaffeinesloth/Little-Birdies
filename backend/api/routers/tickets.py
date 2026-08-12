@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from core.auth import get_current_user, require_super_admin
-from core.database import get_supabase_client
+from core.database import get_supabase_admin
 from models.domain import (
     APIResponse, MetaResponse,
     TicketCreate, TicketUpdate, TicketOut,
@@ -24,7 +24,7 @@ def get_dashboard_stats(
     - Ticket resolved hôm nay
     - % AI tự xử lý (question intent, không cần agent)
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     from datetime import datetime, timezone
 
     today_start = datetime.now(timezone.utc).replace(
@@ -85,7 +85,7 @@ def list_tickets(
     - super_admin: thấy tất cả
     - agent: chỉ thấy ticket open / in_progress / được giao cho mình
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     offset = (page - 1) * limit
 
     query = supabase.table("tickets").select("*", count="exact")
@@ -126,7 +126,7 @@ def get_ticket(
     current_user: dict = Depends(get_current_user),
 ):
     """Lấy chi tiết 1 ticket kèm toàn bộ messages."""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     ticket_result = (
         supabase.table("tickets")
@@ -177,7 +177,7 @@ def update_ticket(
     Cập nhật status hoặc assigned_to của ticket.
     Agent chỉ được đổi status; super_admin đổi cả assigned_to.
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     update_data = payload.model_dump(exclude_none=True)
 
@@ -210,6 +210,5 @@ def update_ticket(
         meta=MetaResponse(code=200, message="Ticket đã được cập nhật."),
         data=result.data[0],
     )
-
 
 

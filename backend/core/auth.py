@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from core.database import get_supabase_client
+from core.database import get_supabase_admin, get_supabase_client
 
 bearer_scheme = HTTPBearer()
 
@@ -13,11 +13,11 @@ async def get_current_user(
     Trả về dict user { id, email, role, status } hoặc raise 401.
     """
     token = credentials.credentials
-    supabase = get_supabase_client()
+    auth_client = get_supabase_client()
 
     try:
         # Verify token với Supabase
-        response = supabase.auth.get_user(token)
+        response = auth_client.auth.get_user(token)
         auth_user = response.user
         if not auth_user:
             raise HTTPException(
@@ -30,7 +30,8 @@ async def get_current_user(
             detail="Token không hợp lệ hoặc đã hết hạn.",
         )
 
-    # Lấy thông tin role từ bảng public.users
+    # Lấy thông tin role bằng service role để tránh vòng lặp RLS trong policy users_select.
+    supabase = get_supabase_admin()
     result = (
         supabase.table("users")
         .select("id, email, full_name, role, status")

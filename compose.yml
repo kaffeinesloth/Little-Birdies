@@ -1,0 +1,63 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: smart-helpdesk-backend
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./ai_service
+    container_name: smart-helpdesk-ai-service
+    environment:
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      INTENT_MODEL: ${INTENT_MODEL:-gemini-1.5-flash}
+      RAG_MODEL: ${RAG_MODEL:-gemini-1.5-pro}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-models/text-embedding-004}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-}
+      CHROMA_PERSIST_DIR: /data/chroma_db
+      FCM_CREDENTIALS_PATH: ${FCM_CREDENTIALS_PATH:-}
+      DEBUG: ${DEBUG:-false}
+      API_SECRET_KEY: ${API_SECRET_KEY:-change-me-in-production}
+      CHUNK_SIZE: ${CHUNK_SIZE:-512}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-64}
+      RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-5}
+      SIMILARITY_THRESHOLD: ${SIMILARITY_THRESHOLD:-0.60}
+    ports:
+      - "8001:8001"
+    volumes:
+      - ai-chroma-data:/data/chroma_db
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-${SUPABASE_URL:-}}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+        NEXT_PUBLIC_AI_SERVICE_URL: ${NEXT_PUBLIC_AI_SERVICE_URL:-http://localhost:8001}
+    container_name: smart-helpdesk-web
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-${SUPABASE_URL:-}}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}
+      NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+      NEXT_PUBLIC_AI_SERVICE_URL: ${NEXT_PUBLIC_AI_SERVICE_URL:-http://localhost:8001}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+      - ai-service
+    restart: unless-stopped
+
+volumes:
+  ai-chroma-data:

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from supabase import AsyncClient, acreate_client
+from supabase import AClient, acreate_client
 
 from config import settings
 
 
 @lru_cache(maxsize=1)
-def _get_cached_client() -> AsyncClient | None:
+def _get_cached_client() -> AClient | None:
     """
     Note: acreate_client là async, nhưng lru_cache không hỗ trợ async.
     Workaround: dùng _client_holder để cache sau lần đầu khởi tạo.
@@ -22,10 +22,10 @@ def _get_cached_client() -> AsyncClient | None:
     return None   # placeholder — client thực được init bởi get_supabase()
 
 
-_client_holder: AsyncClient | None = None
+_client_holder: AClient | None = None
 
 
-async def get_supabase() -> AsyncClient:
+async def get_supabase() -> AClient:
     """
     Trả về Supabase AsyncClient singleton.
     Gọi ở startup hoặc trong Depends().

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from uuid import UUID
 
 from core.auth import get_current_user, require_super_admin
-from core.database import get_supabase_client
+from core.database import get_supabase_admin
 from models.domain import APIResponse, MetaResponse, ChannelUpdate
 
 router = APIRouter()
@@ -11,7 +11,7 @@ router = APIRouter()
 @router.get("", response_model=APIResponse)
 def list_channels(current_user: dict = Depends(get_current_user)):
     """Lấy danh sách kênh và trạng thái kết nối (không trả về config secrets)."""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     result = (
         supabase.table("channels")
@@ -37,7 +37,7 @@ def configure_channel(
     Ví dụ: gán Page Access Token cho Facebook, API key cho Mailgun.
     config là dict tự do — backend lưu nguyên vào JSONB.
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     if channel_type not in ("web", "facebook", "email"):
         raise HTTPException(status_code=400, detail="Loại kênh không hợp lệ.")
@@ -75,7 +75,7 @@ def disconnect_channel(
     current_user: dict = Depends(require_super_admin),
 ):
     """super_admin ngắt kết nối 1 kênh (xóa config, set is_active=false)."""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     if channel_type not in ("web", "facebook", "email"):
         raise HTTPException(status_code=400, detail="Loại kênh không hợp lệ.")

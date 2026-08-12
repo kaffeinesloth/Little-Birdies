@@ -17,7 +17,7 @@ FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "")
 FB_APP_SECRET = os.getenv("FB_APP_SECRET", "")
 MAILGUN_SIGNING_KEY = os.getenv("MAILGUN_SIGNING_KEY", "")
 
-AI_SERVICE_URL = "http://localhost:8001"
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 
 
 # ============================================================

@@ -3,7 +3,7 @@ from uuid import UUID
 from typing import Optional
 
 from core.auth import get_current_user, require_super_admin
-from core.database import get_supabase_client
+from core.database import get_supabase_admin
 from models.domain import (
     APIResponse, MetaResponse,
     UserCreate, UserStatusUpdate, UserOut,
@@ -37,7 +37,7 @@ def update_my_status(
             detail="Bạn không thể tự vô hiệu hóa tài khoản của mình.",
         )
 
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     from datetime import datetime, timezone
 
     update_data = {"status": payload.status.value}
@@ -65,7 +65,7 @@ def update_fcm_token(
     if not token:
         raise HTTPException(status_code=400, detail="fcm_token là bắt buộc.")
 
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     supabase.table("users").update({"fcm_token": token}).eq("id", current_user["id"]).execute()
 
     return APIResponse(
@@ -84,7 +84,7 @@ def list_users(
     current_user: dict = Depends(require_super_admin),
 ):
     """super_admin xem danh sách tất cả agents."""
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
     offset = (page - 1) * limit
 
     query = supabase.table("users").select(
@@ -122,7 +122,7 @@ def invite_agent(
     Supabase Auth sẽ gửi email mời đặt mật khẩu.
     Trigger on_auth_user_created sẽ tự tạo record trong public.users.
     """
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     try:
         response = supabase.auth.admin.invite_user_by_email(
@@ -162,7 +162,7 @@ def update_user_status(
             detail="Không thể thay đổi trạng thái tài khoản của chính mình.",
         )
 
-    supabase = get_supabase_client()
+    supabase = get_supabase_admin()
 
     result = (
         supabase.table("users")

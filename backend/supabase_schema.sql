@@ -169,6 +169,8 @@ CREATE OR REPLACE FUNCTION public.get_my_role()
 RETURNS TEXT
 LANGUAGE sql
 STABLE
+SECURITY DEFINER
+SET search_path = public
 AS $$
     SELECT role FROM public.users WHERE id = auth.uid();
 $$;
@@ -252,3 +254,21 @@ CREATE POLICY "notifications_update" ON public.notifications FOR UPDATE
 ALTER PUBLICATION supabase_realtime ADD TABLE public.tickets;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
+
+-- ============================================================================
+-- STORAGE
+-- Bucket dùng cho Knowledge Base uploads.
+-- ============================================================================
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('knowledge-base', 'knowledge-base', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================================
+-- FIRST ADMIN SETUP
+-- Sau khi tạo user đầu tiên bằng màn hình Sign up của web app, chạy câu này
+-- trong Supabase SQL Editor và thay email bằng email của bạn:
+--
+-- UPDATE public.users
+-- SET role = 'super_admin', status = 'online'
+-- WHERE email = 'your-email@example.com';
+-- ============================================================================
