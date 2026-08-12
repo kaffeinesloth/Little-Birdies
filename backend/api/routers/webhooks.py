@@ -13,11 +13,15 @@ from models.domain import SenderType
 
 router = APIRouter()
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "")
 FB_APP_SECRET = os.getenv("FB_APP_SECRET", "")
 MAILGUN_SIGNING_KEY = os.getenv("MAILGUN_SIGNING_KEY", "")
 
-AI_SERVICE_URL = "http://localhost:8001"
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 
 
 # ============================================================
@@ -26,9 +30,9 @@ AI_SERVICE_URL = "http://localhost:8001"
 
 @router.get("/facebook")
 def facebook_verify(
-    hub_mode: str = Query(..., alias="hub.mode"),
-    hub_verify_token: str = Query(..., alias="hub.verify_token"),
-    hub_challenge: str = Query(..., alias="hub.challenge"),
+    hub_mode: str = Query(default="", alias="hub.mode"),
+    hub_verify_token: str = Query(default="", alias="hub.verify_token"),
+    hub_challenge: str = Query(default="", alias="hub.challenge"),
 ):
     """
     Facebook gọi endpoint này để xác minh webhook URL khi super_admin
@@ -176,12 +180,14 @@ async def _process_incoming(
 
     # Gọi AI service
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(f"{AI_SERVICE_URL}/process", json={
                 "ticket_id": ticket_id,
                 "customer_id": customer_id,
                 "source": source,
                 "content": content,
+                "customer_name": customer_name,
             })
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("Gọi AI service /process thất bại (ticket_id=%s): %s", ticket_id, exc)
+
