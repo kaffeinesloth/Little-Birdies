@@ -4,6 +4,24 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 
 > Tagline: "Tu dong hoa CSKH. Xu ly khieu nai tuc thi."
 
+## Demo Runbook
+
+For teammate setup after pulling `main`, see [docs/TEAM_DEMO_GUIDE.md](docs/TEAM_DEMO_GUIDE.md).
+
+Quick Docker start:
+
+```bash
+cp backend/.env.example backend/.env
+cp ai_service/.env.example ai_service/.env
+docker compose up --build
+```
+
+Demo URLs:
+
+- Flutter web admin/mobile responsive app: http://localhost:8080
+- Backend API docs: http://localhost:8000/api/docs
+- AI service docs: http://localhost:8001/docs
+
 ## Team Information
 
 | # | Full Name | Student ID | Role | Responsibilities |
