@@ -1,9 +1,10 @@
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from uuid import UUID
 
 from core.auth import get_current_user
 from core.database import get_supabase_client, get_supabase_admin
+from core.services import dispatch_channel_reply
 from models.domain import (
     APIResponse, MetaResponse,
     MessageCreate, IncomingMessage,
@@ -86,8 +87,9 @@ async def incoming_message(payload: IncomingMessage):
 
 
 @router.post("", response_model=APIResponse, status_code=201)
-def send_message(
+async def send_message(
     payload: MessageCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -99,7 +101,7 @@ def send_message(
     # Kiểm tra ticket tồn tại
     ticket_result = (
         supabase.table("tickets")
-        .select("id, source, status, customer_id")
+        .select("id, source, status, customer_id, summary")
         .eq("id", str(payload.ticket_id))
         .single()
         .execute()
@@ -135,9 +137,14 @@ def send_message(
             "assigned_to": current_user["id"],
         }).eq("id", str(payload.ticket_id)).execute()
 
-    # TODO: Nếu source=facebook → gọi FB Send API
-    # TODO: Nếu source=email → gọi Mailgun API
-    # Nếu source=web → Supabase Realtime tự broadcast khi INSERT messages
+    # Gửi tin nhắn phản hồi đến kênh của khách hàng (FB/Email) bất đồng bộ
+    background_tasks.add_task(
+        dispatch_channel_reply,
+        source=ticket["source"],
+        customer_id=ticket["customer_id"],
+        content=payload.content,
+        ticket_summary=ticket.get("summary"),
+    )
 
     return APIResponse(
         meta=MetaResponse(code=201, message="Tin nhắn đã được gửi."),
