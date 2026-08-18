@@ -59,6 +59,7 @@ class ConversationManager:
         # Tạo mới
         created = await q.create_conversation(
             self._db,
+            conversation_id=conversation_id,
             tenant_id=tenant_id,
             channel=channel,
             external_id=external_id,

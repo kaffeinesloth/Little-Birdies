@@ -66,8 +66,8 @@ class MessageRole(str, Enum):
 
 
 class Message(BaseModel):
-    id: UUID | None = None
-    conversation_id: UUID | None = None
+    id: str | UUID | None = None
+    conversation_id: str | UUID | None = None
     role: MessageRole
     content: str
     intent: IntentType | None = None    # Chỉ có khi role=user
@@ -80,12 +80,12 @@ class Message(BaseModel):
 
 
 class Conversation(BaseModel):
-    id: UUID
-    tenant_id: UUID
+    id: str | UUID
+    tenant_id: str | UUID
     channel: str                          # "web" | "facebook" | "email"
     external_id: str | None = None        # FB sender_id, email address, etc.
     state: ConvState = ConvState.AI_HANDLING
-    assigned_agent_id: UUID | None = None
+    assigned_agent_id: str | UUID | None = None
     messages: list[Message] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

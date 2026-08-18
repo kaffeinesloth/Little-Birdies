@@ -18,30 +18,35 @@ logger = logging.getLogger(__name__)
 
 async def get_conversation(db, conversation_id: str) -> dict | None:
     res = (
-        await db.table("conversations")
-        .select("*, messages(*)")
+        await db.table("ai_conversations")
+        .select("*, ai_messages(*)")
         .eq("id", conversation_id)
         .maybe_single()
         .execute()
     )
+    if not res or not hasattr(res, "data") or not res.data:
+        return None
     return res.data
 
 
 async def create_conversation(
     db,
+    conversation_id: str,
     tenant_id:   str,
     channel:     str,
     external_id: str | None = None,
 ) -> dict:
     data = {
-        "id":          str(uuid4()),
+        "id":          conversation_id,
         "tenant_id":   tenant_id,
         "channel":     channel,
         "external_id": external_id,
         "state":       "AI_HANDLING",
     }
-    res = await db.table("conversations").insert(data).execute()
-    return res.data[0]
+    res = await db.table("ai_conversations").insert(data).execute()
+    if res and hasattr(res, "data") and res.data:
+        return res.data[0]
+    return data
 
 
 async def update_conversation_state(
@@ -53,7 +58,8 @@ async def update_conversation_state(
     payload: dict = {"state": state, "updated_at": datetime.utcnow().isoformat()}
     if agent_id:
         payload["assigned_agent_id"] = agent_id
-    await db.table("conversations").update(payload).eq("id", conversation_id).execute()
+    await db.table("ai_conversations").update(payload).eq("id", conversation_id).execute()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,7 +82,7 @@ async def add_message(
         "intent":          intent,
         "confidence":      confidence,
     }
-    res = await db.table("messages").insert(data).execute()
+    res = await db.table("ai_messages").insert(data).execute()
     return res.data[0]
 
 
@@ -86,7 +92,7 @@ async def get_recent_messages(
     limit: int = 10,
 ) -> list[dict]:
     res = (
-        await db.table("messages")
+        await db.table("ai_messages")
         .select("role, content")
         .eq("conversation_id", conversation_id)
         .order("created_at", desc=False)
@@ -101,9 +107,11 @@ async def get_recent_messages(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def create_ticket(db, payload: dict) -> dict:
-    data = {**payload, "id": str(uuid4()), "status": "OPEN"}
-    res  = await db.table("tickets").insert(data).execute()
-    return res.data[0]
+    data = {**payload, "id": str(uuid4()), "status": "open"}
+    res = await db.table("tickets").insert(data).execute()
+    if res and hasattr(res, "data") and res.data:
+        return res.data[0]
+    return data
 
 
 async def update_ticket_status(
@@ -204,8 +212,10 @@ async def get_tenant_config(db, tenant_id: str) -> dict:
         .maybe_single()
         .execute()
     )
+    if res and hasattr(res, "data") and res.data:
+        return res.data
     # Trả về config mặc định nếu chưa setup
-    return res.data or {
+    return {
         "tenant_id":        tenant_id,
         "shop_name":        "Shop",
         "bot_persona":      "thân thiện, chuyên nghiệp",

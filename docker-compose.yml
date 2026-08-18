@@ -4,16 +4,16 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     env_file:
-      - path: backend/.env.example
       - path: backend/.env
-        required: false
     environment:
       AI_SERVICE_URL: http://ai-service:8001
     ports:
       - "8000:8000"
     depends_on:
       ai-service:
-        condition: service_started
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
       interval: 15s
@@ -25,21 +25,27 @@ services:
       context: .
       dockerfile: ai_service/Dockerfile
     env_file:
-      - path: ai_service/.env.example
       - path: ai_service/.env
-        required: false
     environment:
       BACKEND_URL: http://backend:8000
       CHROMA_PERSIST_DIR: /data/chroma_db
     ports:
       - "8001:8001"
     volumes:
+      - ./ai_service:/app
       - ai_chroma_data:/data/chroma_db
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
+
+  store-website:
+    image: nginx:alpine
+    volumes:
+      - ./store/dist:/usr/share/nginx/html:ro
+    ports:
+      - "3000:80"
 
   flutter-web:
     build:
@@ -49,7 +55,7 @@ services:
       - "8080:80"
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   ai_chroma_data:

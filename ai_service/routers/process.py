@@ -10,7 +10,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+import os
+import httpx
 from dependencies import get_orchestrator
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,6 +62,20 @@ async def process_incoming_message(
             channel=payload.source,
             external_id=payload.customer_id,
         )
+
+        # Gửi bot reply về Backend
+        if result.reply:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.post(
+                        f"{BACKEND_URL}/api/v1/messages/bot-reply",
+                        json={
+                            "ticket_id": payload.ticket_id,
+                            "content": result.reply,
+                        }
+                    )
+            except Exception as e:
+                logger.error("Failed to callback backend for ticket %s: %s", payload.ticket_id, e)
 
         return ProcessResponse(
             status="ok",

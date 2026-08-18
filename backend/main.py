@@ -14,11 +14,11 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
-# CORS — trong production thay * bằng domain cụ thể
+# CORS — Cho phép truy cập từ tất cả origin (Store 3000 & Admin 8080)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

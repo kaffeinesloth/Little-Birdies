@@ -40,16 +40,32 @@ class Retriever:
             logger.debug("No results from vector store for tenant=%s", tenant_id)
             return [], 0.0
 
+        # Keyword boost cho các từ quan trọng
+        q_words = [w.lower() for w in query.split() if len(w) > 2]
+        for r in results:
+            text_lower = r["text"].lower()
+            overlap_count = sum(1 for w in q_words if w in text_lower)
+            if overlap_count > 0:
+                # Tăng điểm tương đồng nếu trùng từ khóa
+                r["similarity"] = min(1.0, r["similarity"] + min(0.30, overlap_count * 0.08))
+
+        # Sort lại sau khi boost
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+
         # 2. Filter theo similarity threshold
         threshold = settings.similarity_threshold
         filtered = [r for r in results if r["similarity"] >= threshold]
 
         if not filtered:
-            logger.debug(
-                "All results below threshold=%.2f for query='%s...'",
-                threshold, query[:40],
-            )
-            return [], max(r["similarity"] for r in results)
+            # Nếu không có chunk nào qua threshold, vẫn lấy top 1 nếu có keyword match
+            if results and results[0]["similarity"] >= 0.20:
+                filtered = [results[0]]
+            else:
+                logger.debug(
+                    "All results below threshold=%.2f for query='%s...'",
+                    threshold, query[:40],
+                )
+                return [], (results[0]["similarity"] if results else 0.0)
 
         # 3. MMR reranking: chọn tối đa 3 chunks diverse nhất
         diverse = self._mmr(filtered, top_k=3)

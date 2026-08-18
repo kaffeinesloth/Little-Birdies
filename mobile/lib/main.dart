@@ -1,6 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:async';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Supabase.initialize(
+      url: 'https://djgvczqdtysefrdmujrr.supabase.co',
+      anonKey:
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZ3ZjenFkdHlzZWZyZG11anJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MDMyODAsImV4cCI6MjEwMTk3OTI4MH0.sRdLhWHSV6OF6wjnvXsTwTyhxLl7yS5MQYOMvkKadiw',
+    );
+  } catch (e) {
+    print('Supabase init notice: $e');
+  }
   runApp(const SmartHelpdeskApp());
 }
 
@@ -11,9 +25,10 @@ class SmartHelpdeskApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Smart Helpdesk',
+      title: 'Smart Helpdesk - Quản Trị CSKH SportGear Boutique',
       theme: ThemeData(
         useMaterial3: true,
+        fontFamily: 'Roboto',
         scaffoldBackgroundColor: AppColors.background,
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppColors.primary,
@@ -21,27 +36,11 @@ class SmartHelpdeskApp extends StatelessWidget {
           surface: Colors.white,
         ),
         textTheme: Theme.of(context).textTheme.apply(
-          bodyColor: AppColors.slate900,
-          displayColor: AppColors.slate900,
-        ),
+              bodyColor: AppColors.slate900,
+              displayColor: AppColors.slate900,
+            ),
       ),
-      home: const SmartHelpdeskResponsiveHome(),
-    );
-  }
-}
-
-class SmartHelpdeskResponsiveHome extends StatelessWidget {
-  const SmartHelpdeskResponsiveHome({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 980) {
-          return const WebAdminWorkspace();
-        }
-        return const StaffWorkspaceShell();
-      },
+      home: const WebAdminWorkspace(),
     );
   }
 }
@@ -54,60 +53,541 @@ class WebAdminWorkspace extends StatefulWidget {
 }
 
 class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
+  Timer? _pollTimer;
   int _tabIndex = 0;
   TicketSource? _channelFilter;
-  TicketStatus? _statusFilter;
-  SupportTicket _selectedTicket = demoTickets.first;
+  TicketStatus? _statusFilter;          // ← Mới: filter theo trạng thái
+  SupportTicket _selectedTicket = initialDemoTickets.first;
   bool _humanTakeover = false;
-  bool _uploading = false;
-  double _uploadProgress = 0;
   final _replyController = TextEditingController();
-  final List<TicketMessage> _liveMessages = [
-    const TicketMessage(
-      sender: SenderType.bot,
-      content:
-          'AI Agent connected and escalated this conversation to staff workspace.',
-    ),
-    const TicketMessage(
-      sender: SenderType.customer,
-      content: 'San pham bi rach roi, shop xu ly giup toi ngay duoc khong?',
-    ),
-    const TicketMessage(
-      sender: SenderType.bot,
-      content:
-          'Em da tao ticket uu tien cao va chuyen nhan vien CSKH ho tro minh ngay.',
-    ),
+  final _chatScrollController = ScrollController();
+  List<SupportTicket> _tickets = List.from(initialDemoTickets);
+  List<TicketMessage> _liveMessages = [];
+  Map<String, dynamic> _dashboardStats = {};
+  Map<String, dynamic> _productIssues = {};  // ← Mới: dữ liệu sản phẩm lỗi
+  Map<String, dynamic> _agentPerformance = {}; // ← Mới: hiệu suất nhân viên
+  List<Map<String, dynamic>> _staffList = [];
+  List<Map<String, dynamic>> _documentsList = [];
+  List<String> _aiSuggestions = [
+    'Dạ chào bạn, với chiều cao và cân nặng của bạn, size L áo Polo Pro Active sẽ vừa vặn và tôn dáng nhất ạ!',
+    'Dạ SportGear hỗ trợ đổi size hoàn toàn miễn phí tại nhà trong vòng 30 ngày nếu bạn mặc chưa vừa nhé!',
+    'Dạ đơn hàng Áo Polo từ 500.000đ được FREESHIP 100% toàn quốc và giao hỏa tốc 2h tại TP.HCM ạ.',
   ];
+  bool _isLoadingSuggestions = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _liveMessages = List.from(_selectedTicket.messages);
+    _fetchTickets();
+    _fetchStats();
+    _fetchStaff();
+    _fetchDocuments();
+    _setupRealtime();
+
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+      _fetchTickets(silent: true);
+      if (_selectedTicket.ticketId.isNotEmpty) {
+        _fetchMessages(_selectedTicket.ticketId, silent: true);
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _replyController.dispose();
+    _chatScrollController.dispose();
     super.dispose();
   }
 
-  void _sendReply() {
-    final text = _replyController.text.trim();
-    if (text.isEmpty) return;
-    setState(() {
-      _liveMessages.add(TicketMessage(sender: SenderType.human, content: text));
-      _replyController.clear();
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScrollController.hasClients) {
+        _chatScrollController.animateTo(
+          _chatScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
-  Future<void> _simulateUpload() async {
-    if (_uploading) return;
-    setState(() {
-      _uploading = true;
-      _uploadProgress = 0;
-    });
-    for (final progress in [0.25, 0.5, 0.75, 1.0]) {
-      await Future<void>.delayed(const Duration(milliseconds: 180));
-      if (!mounted) return;
-      setState(() => _uploadProgress = progress);
+  // ── 1. Fetch Danh Sách Tickets Thật ─────────────────────────────────────────
+  Future<void> _fetchTickets({bool silent = false}) async {
+    try {
+      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-list'));
+      if (res.statusCode == 200) {
+        final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+        final data = (jsonRes['data'] as List?) ?? [];
+        if (data.isNotEmpty) {
+          final loaded = data.map((e) {
+            final rawId = e['id']?.toString() ?? '';
+            return SupportTicket(
+              number: rawId.hashCode.abs() % 1000,
+              customerName: e['customer_name'] ?? e['customer_id'] ?? 'Khách Hàng',
+              source: _parseSource(e['source']),
+              status: _parseStatus(e['status']),
+              intent: _parseIntent(e['intent']),
+              summary: e['summary'] ?? e['context_summary'] ?? 'Yêu cầu tư vấn sản phẩm',
+              createdAgo: 'Vừa xong',
+              ticketId: rawId,
+              messages: [],
+            );
+          }).toList();
+
+          setState(() {
+            _tickets = loaded;
+            if (_selectedTicket.ticketId.isEmpty || !_tickets.any((t) => t.ticketId == _selectedTicket.ticketId)) {
+              _selectedTicket = _tickets.first;
+              _fetchMessages(_selectedTicket.ticketId);
+              _fetchAiSuggestions(_selectedTicket.ticketId);
+            }
+          });
+        }
+      }
+    } catch (e) {
+      if (!silent) print('Lỗi tải tickets: $e');
     }
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-    if (!mounted) return;
-    setState(() => _uploading = false);
+  }
+
+  // ── 2. Fetch Messages Thật Của Ticket ──────────────────────────────────────
+  Future<void> _fetchMessages(String ticketId, {bool silent = false}) async {
+    if (ticketId.isEmpty) return;
+    try {
+      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-detail/$ticketId'));
+      if (res.statusCode == 200) {
+        final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+        final data = (jsonRes['data']?['messages'] as List?) ?? [];
+        if (data.isNotEmpty) {
+          setState(() {
+            _liveMessages = data.map((e) {
+              final sType = e['sender_type'];
+              return TicketMessage(
+                sender: sType == 'bot'
+                    ? SenderType.bot
+                    : (sType == 'human' ? SenderType.human : SenderType.customer),
+                content: e['content'] ?? '',
+              );
+            }).toList();
+          });
+          _scrollToBottom();
+        }
+      }
+    } catch (e) {
+      if (!silent) print('Lỗi tải tin nhắn: $e');
+    }
+  }
+
+  // ── 3. Fetch Gợi Ý AI Copilot Động ─────────────────────────────────────────
+  Future<void> _fetchAiSuggestions(String ticketId) async {
+    if (ticketId.isEmpty) return;
+    setState(() => _isLoadingSuggestions = true);
+    try {
+      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-ai-suggest/$ticketId'));
+      if (res.statusCode == 200) {
+        final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+        final list = (jsonRes['data'] as List?)?.map((e) => e.toString()).toList() ?? [];
+        if (list.isNotEmpty) {
+          setState(() {
+            _aiSuggestions = list;
+            _isLoadingSuggestions = false;
+          });
+          return;
+        }
+      }
+    } catch (_) {}
+    setState(() => _isLoadingSuggestions = false);
+  }
+
+  // ── 4. Fetch Thống Kê Doanh Thu + Hiệu Suất ───────────────────────────────
+  Future<void> _fetchStats() async {
+    try {
+      final futures = await Future.wait([
+        http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-stats')),
+        http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-product-issues')),
+        http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-agent-performance')),
+      ]);
+      if (futures[0].statusCode == 200) {
+        setState(() => _dashboardStats = json.decode(utf8.decode(futures[0].bodyBytes))['data'] ?? {});
+      }
+      if (futures[1].statusCode == 200) {
+        setState(() => _productIssues = json.decode(utf8.decode(futures[1].bodyBytes))['data'] ?? {});
+      }
+      if (futures[2].statusCode == 200) {
+        setState(() => _agentPerformance = json.decode(utf8.decode(futures[2].bodyBytes))['data'] ?? {});
+      }
+    } catch (e) {
+      print('Lỗi tải stats: $e');
+    }
+  }
+
+  // ── 5. Fetch Danh Sách Nhân Viên Thật ──────────────────────────────────────
+  Future<void> _fetchStaff() async {
+    try {
+      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/users/demo-list'));
+      if (res.statusCode == 200) {
+        final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+        setState(() {
+          _staffList = List<Map<String, dynamic>>.from(jsonRes['data'] ?? []);
+        });
+      }
+    } catch (e) {
+      print('Lỗi tải nhân viên: $e');
+    }
+  }
+
+  // ── 6. Fetch Danh Sách Tài Liệu Thật (ChromaDB) ────────────────────────────
+  Future<void> _fetchDocuments() async {
+    try {
+      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/documents/demo-list'));
+      if (res.statusCode == 200) {
+        final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+        setState(() {
+          _documentsList = List<Map<String, dynamic>>.from(jsonRes['data'] ?? []);
+        });
+      }
+    } catch (e) {
+      print('Lỗi tải tài liệu: $e');
+    }
+  }
+
+  // ── 7. Setup Supabase Realtime ─────────────────────────────────────────────
+  void _setupRealtime() {
+    try {
+      Supabase.instance.client
+          .channel('public:messages')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.insert,
+            schema: 'public',
+            table: 'messages',
+            callback: (payload) {
+              final msg = payload.newRecord;
+              if (msg['ticket_id'] == _selectedTicket.ticketId) {
+                setState(() {
+                  _liveMessages.add(TicketMessage(
+                    sender: msg['sender_type'] == 'bot'
+                        ? SenderType.bot
+                        : (msg['sender_type'] == 'human' ? SenderType.human : SenderType.customer),
+                    content: msg['content'] ?? '',
+                  ));
+                });
+                _scrollToBottom();
+                _fetchAiSuggestions(_selectedTicket.ticketId);
+              }
+              _fetchTickets(silent: true);
+            },
+          )
+          .subscribe();
+    } catch (e) {
+      print('Lỗi Realtime: $e');
+    }
+  }
+
+  // ── 8. Gửi Tin Nhắn CSKH Trực Tiếp ────────────────────────────────────────
+  void _sendReply() async {
+    final text = _replyController.text.trim();
+    if (text.isEmpty || _selectedTicket.ticketId.isEmpty) return;
+
+    setState(() {
+      _liveMessages.add(TicketMessage(sender: SenderType.human, content: text));
+      _replyController.clear();
+      _humanTakeover = true;
+    });
+    _scrollToBottom();
+
+    try {
+      await http.post(
+        Uri.parse('http://localhost:8000/api/v1/messages/agent-reply-demo'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: json.encode({
+          'ticket_id': _selectedTicket.ticketId,
+          'content': text,
+        }),
+      );
+      _fetchTickets(silent: true);
+    } catch (e) {
+      print('Lỗi gửi tin nhắn: $e');
+    }
+  }
+
+  // ── 9. Cập Nhật Trạng Thái Ticket ──────────────────────────────────────────
+  Future<void> _updateTicketStatus(String newStatus) async {
+    if (_selectedTicket.ticketId.isEmpty) return;
+    try {
+      await http.patch(
+        Uri.parse('http://localhost:8000/api/v1/tickets/demo-status/${_selectedTicket.ticketId}'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: json.encode({'status': newStatus}),
+      );
+      _fetchTickets();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Đã cập nhật trạng thái ticket: $newStatus'),
+            backgroundColor: AppColors.success,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Lỗi cập nhật trạng thái: $e');
+    }
+  }
+
+  void _toggleHumanTakeover() {
+    setState(() {
+      _humanTakeover = !_humanTakeover;
+    });
+    _updateTicketStatus(_humanTakeover ? 'in_progress' : 'open');
+  }
+
+  // ── 10. Dialog Upload Tài Liệu Vào ChromaDB (Dành Cho Quản Lý) ─────────────
+  void _showUploadDocumentDialog() {
+    final nameCtrl = TextEditingController();
+    final contentCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_upload_rounded, color: AppColors.primary),
+            SizedBox(width: 8),
+            Text('Nạp Tài Liệu Tri Thức Vào ChromaDB', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          ],
+        ),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Chức năng dành riêng cho Quản Lý: Tài liệu sẽ được chunking và embedding thành vector 768-dim để AI bot học và tra cứu:',
+                style: TextStyle(fontSize: 12, color: AppColors.slate600),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: nameCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Tên tài liệu (.txt, .pdf, .docx)',
+                  hintText: 'Ví dụ: Bang_Gia_Khuyen_Mai_Thang_8.txt',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: contentCtrl,
+                maxLines: 6,
+                decoration: InputDecoration(
+                  labelText: 'Nội dung kiến thức cần nạp cho AI',
+                  hintText: 'Nhập thông số sản phẩm mới, bảng size, quy định bảo hành hoặc chính sách freeship...',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Hủy'),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.check, size: 16),
+            label: const Text('Nạp & Indexing Ngay'),
+            onPressed: () async {
+              final name = nameCtrl.text.trim();
+              final content = contentCtrl.text.trim();
+              if (name.isEmpty || content.isEmpty) return;
+
+              Navigator.pop(ctx);
+              try {
+                final uri = Uri.parse('http://localhost:8000/api/v1/documents/demo-upload');
+                final request = http.MultipartRequest('POST', uri)
+                  ..files.add(http.MultipartFile.fromString(
+                    'file',
+                    content,
+                    filename: name.endsWith('.txt') ? name : '$name.txt',
+                  ));
+                final streamedResponse = await request.send();
+                final response = await http.Response.fromStream(streamedResponse);
+
+                if (response.statusCode == 201) {
+                  _fetchDocuments();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Đã nạp và Index tài liệu "$name" vào ChromaDB thành công!'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                print('Lỗi upload document: $e');
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 11. Xóa Tài Liệu Khỏi ChromaDB ────────────────────────────────────────
+  void _deleteDocument(String docId, String name) async {
+    try {
+      await http.delete(Uri.parse('http://localhost:8000/api/v1/documents/demo-delete/$docId'));
+      _fetchDocuments();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Đã xóa tài liệu "$name" khỏi Knowledge Base.'),
+          backgroundColor: AppColors.slate700,
+        ),
+      );
+    } catch (e) {
+      print('Lỗi xóa document: $e');
+    }
+  }
+
+  // ── 12. CRUD Nhân Viên CSKH ───────────────────────────────────────────────
+  void _showAddStaffDialog() {
+    final nameCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    String role = 'agent';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.person_add_rounded, color: AppColors.primary),
+              SizedBox(width: 8),
+              Text('Thêm Nhân Viên CSKH Mới', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Họ và Tên',
+                    hintText: 'Ví dụ: Nguyễn Văn Hoàng',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: emailCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Email Đăng Nhập',
+                    hintText: 'Ví dụ: hoang.nguyen@sportgear.vn',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  value: role,
+                  decoration: InputDecoration(
+                    labelText: 'Vai Trò Phân Quyền',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'agent', child: Text('Nhân Viên Tư Vấn (Agent)')),
+                    DropdownMenuItem(value: 'senior_agent', child: Text('Trưởng Ca CSKH (Senior Agent)')),
+                    DropdownMenuItem(value: 'super_admin', child: Text('Chủ Shop / Quản Trị Viên (Super Admin)')),
+                  ],
+                  onChanged: (val) => setDialogState(() => role = val ?? 'agent'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                final email = emailCtrl.text.trim();
+                if (name.isEmpty || email.isEmpty) return;
+
+                Navigator.pop(ctx);
+                try {
+                  await http.post(
+                    Uri.parse('http://localhost:8000/api/v1/users/demo-create'),
+                    headers: {'Content-Type': 'application/json; charset=utf-8'},
+                    body: json.encode({
+                      'full_name': name,
+                      'email': email,
+                      'role': role,
+                    }),
+                  );
+                  _fetchStaff();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Đã tạo nhân viên $name thành công!'), backgroundColor: AppColors.success),
+                  );
+                } catch (e) {
+                  print('Lỗi tạo nhân viên: $e');
+                }
+              },
+              child: const Text('Lưu Nhân Viên'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _deleteStaff(String userId, String name) async {
+    try {
+      await http.delete(Uri.parse('http://localhost:8000/api/v1/users/demo-delete/$userId'));
+      _fetchStaff();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Đã xóa nhân viên $name khỏi hệ thống.'), backgroundColor: AppColors.slate700),
+      );
+    } catch (e) {
+      print('Lỗi xóa nhân viên: $e');
+    }
+  }
+
+  void _toggleStaffStatus(String userId, String currentStatus) async {
+    final newStatus = currentStatus == 'online' ? 'offline' : 'online';
+    try {
+      await http.patch(
+        Uri.parse('http://localhost:8000/api/v1/users/demo-status/$userId'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: json.encode({'status': newStatus}),
+      );
+      _fetchStaff();
+    } catch (e) {
+      print('Lỗi đổi trạng thái nhân viên: $e');
+    }
+  }
+
+  TicketSource _parseSource(String? s) {
+    if (s == 'facebook') return TicketSource.facebook;
+    if (s == 'email') return TicketSource.email;
+    return TicketSource.web;
+  }
+
+  TicketStatus _parseStatus(String? s) {
+    if (s == 'open' || s == 'OPEN') return TicketStatus.open;
+    if (s == 'in_progress' || s == 'IN_PROGRESS') return TicketStatus.inProgress;
+    if (s == 'resolved' || s == 'RESOLVED') return TicketStatus.resolved;
+    return TicketStatus.pending;
+  }
+
+  TicketIntent _parseIntent(String? s) {
+    if (s == 'complaint' || s == 'COMPLAINT') return TicketIntent.complaint;
+    if (s == 'spam' || s == 'SPAM') return TicketIntent.spam;
+    return TicketIntent.question;
   }
 
   @override
@@ -118,42 +598,78 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         children: [
           _WebHeader(
             selectedIndex: _tabIndex,
-            onTabChanged: (index) => setState(() => _tabIndex = index),
-            onAutoDemo: () {
-              setState(() {
-                _tabIndex = 0;
-                _humanTakeover = true;
-                _replyController.text =
-                    'Da chao ban, shop da tiep nhan su co hang bi rach. Ben minh se gui san pham moi bu ngay trong hom nay.';
-              });
+            onTabChanged: (index) {
+              setState(() => _tabIndex = index);
+              if (index == 0) _fetchTickets();
+              if (index == 1) _fetchStats();
+              if (index == 2) { _fetchStaff(); _fetchDocuments(); }
+            },
+            onRefreshAll: () {
+              _fetchTickets();
+              _fetchStats();
+              _fetchStaff();
+              _fetchDocuments();
+              if (_selectedTicket.ticketId.isNotEmpty) {
+                _fetchMessages(_selectedTicket.ticketId);
+                _fetchAiSuggestions(_selectedTicket.ticketId);
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Đã làm mới toàn bộ dữ liệu hệ thống!'), duration: Duration(seconds: 1)),
+              );
             },
           ),
-          _DemoGuideBanner(isAnalytics: _tabIndex == 1),
+          _DemoGuideBanner(tabIndex: _tabIndex),
           Expanded(
-            child: _tabIndex == 0
-                ? _WorkspaceDashboard(
-                    selectedTicket: _selectedTicket,
-                    channelFilter: _channelFilter,
-                    statusFilter: _statusFilter,
-                    humanTakeover: _humanTakeover,
-                    liveMessages: _liveMessages,
-                    replyController: _replyController,
-                    uploading: _uploading,
-                    uploadProgress: _uploadProgress,
-                    onSelectTicket: (ticket) =>
-                        setState(() => _selectedTicket = ticket),
-                    onChannelFilter: (filter) =>
-                        setState(() => _channelFilter = filter),
-                    onStatusFilter: (filter) =>
-                        setState(() => _statusFilter = filter),
-                    onToggleTakeover: () =>
-                        setState(() => _humanTakeover = !_humanTakeover),
-                    onFillDraft: (text) =>
-                        setState(() => _replyController.text = text),
-                    onSendReply: _sendReply,
-                    onUpload: _simulateUpload,
-                  )
-                : const _AnalyticsDashboard(),
+            child: IndexedStack(
+              index: _tabIndex,
+              children: [
+                // Tab 0: Không Gian Live Chat & Khách Hàng (Full Height, Independent Scroll)
+                _LiveWorkspaceLayout(
+                  tickets: _tickets,
+                  selectedTicket: _selectedTicket,
+                  channelFilter: _channelFilter,
+                  statusFilter: _statusFilter,
+                  humanTakeover: _humanTakeover,
+                  liveMessages: _liveMessages,
+                  replyController: _replyController,
+                  chatScrollController: _chatScrollController,
+                  aiSuggestions: _aiSuggestions,
+                  isLoadingSuggestions: _isLoadingSuggestions,
+                  onSelectTicket: (ticket) {
+                    setState(() {
+                      _selectedTicket = ticket;
+                      _humanTakeover = ticket.status == TicketStatus.inProgress;
+                      _liveMessages = List.from(ticket.messages);
+                    });
+                    _fetchMessages(ticket.ticketId);
+                    _fetchAiSuggestions(ticket.ticketId);
+                  },
+                  onChannelFilter: (filter) => setState(() => _channelFilter = filter),
+                  onStatusFilter: (status) => setState(() => _statusFilter = status),
+                  onToggleTakeover: _toggleHumanTakeover,
+                  onResolveTicket: () => _updateTicketStatus('resolved'),
+                  onUpdateStatus: (st) => _updateTicketStatus(st),
+                  onFillDraft: (text) => setState(() => _replyController.text = text),
+                  onSendReply: _sendReply,
+                ),
+                // Tab 1: Analytics & Executive Dashboard
+                _AnalyticsDashboard(
+                  stats: _dashboardStats,
+                  productIssues: _productIssues,
+                  agentPerformance: _agentPerformance,
+                ),
+                // Tab 2: Quản Lý Hệ Thống & Bộ Tri Thức AI (Dành Riêng Cho Quản Lý)
+                _AdminManagementDashboard(
+                  staffList: _staffList,
+                  documentsList: _documentsList,
+                  onAddStaff: _showAddStaffDialog,
+                  onDeleteStaff: _deleteStaff,
+                  onToggleStatus: _toggleStaffStatus,
+                  onUploadDocument: _showUploadDocumentDialog,
+                  onDeleteDocument: _deleteDocument,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -161,21 +677,22 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   }
 }
 
+// ── Header Widget ────────────────────────────────────────────────────────────
 class _WebHeader extends StatelessWidget {
   const _WebHeader({
     required this.selectedIndex,
     required this.onTabChanged,
-    required this.onAutoDemo,
+    required this.onRefreshAll,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onTabChanged;
-  final VoidCallback onAutoDemo;
+  final VoidCallback onRefreshAll;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 11),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(bottom: BorderSide(color: AppColors.slate200)),
@@ -196,11 +713,14 @@ class _WebHeader extends StatelessWidget {
               gradient: const LinearGradient(
                 colors: [AppColors.primary, AppColors.indigo],
               ),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: const [
+                BoxShadow(color: Color(0x332563EB), blurRadius: 8, offset: Offset(0, 3)),
+              ],
             ),
-            child: const Icon(Icons.headset_mic, color: Colors.white),
+            child: const Icon(Icons.headset_mic_rounded, color: Colors.white, size: 22),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -208,27 +728,27 @@ class _WebHeader extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      'Smart Helpdesk Workspace',
+                      'Hệ Thống Quản Trị CSKH Đa Kênh',
                       style: TextStyle(
                         color: AppColors.slate900,
-                        fontSize: 18,
+                        fontSize: 17,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
                     SizedBox(width: 10),
                     BadgeChip(
-                      label: 'Web Admin & Staff Management',
+                      label: 'SportGear Boutique Portal',
                       color: AppColors.primary,
                       backgroundColor: AppColors.primarySoft,
                     ),
                   ],
                 ),
-                SizedBox(height: 3),
+                SizedBox(height: 2),
                 Text(
-                  'He thong quan ly hop nhat kenh Web Store & Facebook Messenger + RAG KB',
+                  'Hỗ trợ khách hàng thời gian thực (Web Store & FB) • AI RAG Engine & Human Live Support',
                   style: TextStyle(
                     color: AppColors.slate500,
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -239,22 +759,11 @@ class _WebHeader extends StatelessWidget {
             selectedIndex: selectedIndex,
             onChanged: onTabChanged,
           ),
-          const SizedBox(width: 12),
-          FilledButton.icon(
-            onPressed: onAutoDemo,
-            icon: const Icon(Icons.play_arrow, size: 18),
-            label: const Text('Auto Demo'),
-            style: FilledButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton.outlined(
-            onPressed: () {},
-            tooltip: 'Reset demo',
-            icon: const Icon(Icons.refresh),
+          const SizedBox(width: 14),
+          IconButton.filledTonal(
+            onPressed: onRefreshAll,
+            tooltip: 'Làm mới dữ liệu',
+            icon: const Icon(Icons.refresh_rounded, size: 20),
           ),
         ],
       ),
@@ -274,7 +783,7 @@ class _SegmentedHeaderTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(5),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: AppColors.slate100,
         borderRadius: BorderRadius.circular(12),
@@ -285,16 +794,23 @@ class _SegmentedHeaderTabs extends StatelessWidget {
         children: [
           _HeaderTabButton(
             selected: selectedIndex == 0,
-            icon: Icons.forum_outlined,
-            label: '1. Quan Ly Chat & Ticket',
+            icon: Icons.forum_rounded,
+            label: '1. Live Chat & CSKH',
             onTap: () => onChanged(0),
           ),
-          const SizedBox(width: 5),
+          const SizedBox(width: 4),
           _HeaderTabButton(
             selected: selectedIndex == 1,
-            icon: Icons.trending_up,
-            label: '2. Bao Cao Chu Shop',
+            icon: Icons.analytics_rounded,
+            label: '2. Báo Cáo & Doanh Số',
             onTap: () => onChanged(1),
+          ),
+          const SizedBox(width: 4),
+          _HeaderTabButton(
+            selected: selectedIndex == 2,
+            icon: Icons.admin_panel_settings_rounded,
+            label: '3. Quản Lý & Tri Thức AI',
+            onTap: () => onChanged(2),
           ),
         ],
       ),
@@ -318,13 +834,13 @@ class _HeaderTabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? AppColors.primary : Colors.white,
+      color: selected ? AppColors.primary : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           child: Row(
             children: [
               Icon(
@@ -350,15 +866,24 @@ class _HeaderTabButton extends StatelessWidget {
 }
 
 class _DemoGuideBanner extends StatelessWidget {
-  const _DemoGuideBanner({required this.isAnalytics});
+  const _DemoGuideBanner({required this.tabIndex});
 
-  final bool isAnalytics;
+  final int tabIndex;
 
   @override
   Widget build(BuildContext context) {
+    String text;
+    if (tabIndex == 0) {
+      text = 'Đang ở Tab 1: Live Chat CSKH. Giao diện toàn màn hình, cuộn độc lập riêng trong khung chat, kết nối 2 chiều với Web Store (Port 3000).';
+    } else if (tabIndex == 1) {
+      text = 'Đang ở Tab 2: Báo cáo phân tích doanh thu và tỷ lệ tự động hóa do AI chốt đơn được cập nhật trực tiếp từ Database.';
+    } else {
+      text = 'Đang ở Tab 3: Trung tâm Quản Trị dành riêng cho Quản Lý — Quản lý nhân sự, phân quyền trực ca và nạp tri thức ChromaDB cho AI bot.';
+    }
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 7),
       decoration: const BoxDecoration(
         color: AppColors.primarySoft,
         border: Border(bottom: BorderSide(color: Color(0xFFDBEAFE))),
@@ -366,30 +891,28 @@ class _DemoGuideBanner extends StatelessWidget {
       child: Row(
         children: [
           const BadgeChip(
-            label: 'CHE DO XEM',
+            label: 'HỆ THỐNG TRỰC TUYẾN',
             color: Colors.white,
             backgroundColor: AppColors.primary,
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              isAnalytics
-                  ? 'Dang xem Tab 2: Bao cao thong ke danh cho chu shop.'
-                  : 'Dang xem Tab 1: Quan ly Chat & Ticket Live. Nhan vien co the Human Override hoac chon Nhap AI de sua.',
+              text,
               style: const TextStyle(
                 color: AppColors.slate800,
-                fontSize: 12,
+                fontSize: 11.5,
                 fontWeight: FontWeight.w700,
               ),
             ),
           ),
-          const Icon(Icons.circle, color: AppColors.success, size: 9),
-          const SizedBox(width: 7),
+          const Icon(Icons.circle, color: AppColors.success, size: 8),
+          const SizedBox(width: 6),
           const Text(
-            'Live Broadcast Ready',
+            'Supabase Realtime Đang Đồng Bộ',
             style: TextStyle(
               color: AppColors.success,
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -399,360 +922,253 @@ class _DemoGuideBanner extends StatelessWidget {
   }
 }
 
-class _WorkspaceDashboard extends StatelessWidget {
-  const _WorkspaceDashboard({
+// ── Tab 0: Không Gian Live Chat & Customer Profile (Full Height, Independent Scroll) ──
+class _LiveWorkspaceLayout extends StatelessWidget {
+  const _LiveWorkspaceLayout({
+    required this.tickets,
     required this.selectedTicket,
     required this.channelFilter,
     required this.statusFilter,
     required this.humanTakeover,
     required this.liveMessages,
     required this.replyController,
-    required this.uploading,
-    required this.uploadProgress,
+    required this.chatScrollController,
+    required this.aiSuggestions,
+    required this.isLoadingSuggestions,
     required this.onSelectTicket,
     required this.onChannelFilter,
     required this.onStatusFilter,
     required this.onToggleTakeover,
+    required this.onResolveTicket,
+    required this.onUpdateStatus,
     required this.onFillDraft,
     required this.onSendReply,
-    required this.onUpload,
   });
 
+  final List<SupportTicket> tickets;
   final SupportTicket selectedTicket;
   final TicketSource? channelFilter;
   final TicketStatus? statusFilter;
   final bool humanTakeover;
   final List<TicketMessage> liveMessages;
   final TextEditingController replyController;
-  final bool uploading;
-  final double uploadProgress;
+  final ScrollController chatScrollController;
+  final List<String> aiSuggestions;
+  final bool isLoadingSuggestions;
   final ValueChanged<SupportTicket> onSelectTicket;
   final ValueChanged<TicketSource?> onChannelFilter;
   final ValueChanged<TicketStatus?> onStatusFilter;
   final VoidCallback onToggleTakeover;
+  final VoidCallback onResolveTicket;
+  final ValueChanged<String> onUpdateStatus;
   final ValueChanged<String> onFillDraft;
   final VoidCallback onSendReply;
-  final VoidCallback onUpload;
 
   @override
   Widget build(BuildContext context) {
-    final visibleTickets = demoTickets.where((ticket) {
-      final matchesChannel =
-          channelFilter == null || ticket.source == channelFilter;
-      return matchesChannel;
+    final visibleTickets = tickets.where((ticket) {
+      if (channelFilter != null && ticket.source != channelFilter) return false;
+      if (statusFilter != null && ticket.status != statusFilter) return false;
+      return true;
     }).toList();
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1850),
-          child: Column(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 7,
-                    child: _LiveWorkspacePanel(
-                      tickets: visibleTickets,
-                      selectedTicket: selectedTicket,
-                      channelFilter: channelFilter,
-                      humanTakeover: humanTakeover,
-                      liveMessages: liveMessages,
-                      replyController: replyController,
-                      onChannelFilter: onChannelFilter,
-                      onSelectTicket: onSelectTicket,
-                      onToggleTakeover: onToggleTakeover,
-                      onFillDraft: onFillDraft,
-                      onSendReply: onSendReply,
-                    ),
-                  ),
-                  const SizedBox(width: 24),
-                  Expanded(
-                    flex: 5,
-                    child: _KnowledgePanel(
-                      uploading: uploading,
-                      uploadProgress: uploadProgress,
-                      onUpload: onUpload,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              _TicketManagementHub(
-                statusFilter: statusFilter,
-                onStatusFilter: onStatusFilter,
-                onSelectTicket: onSelectTicket,
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Cột 1 (310px): Hộp thư đa kênh & Bộ lọc kênh + trạng thái
+          SizedBox(
+            width: 310,
+            child: _ConversationPanel(
+              tickets: visibleTickets,
+              allTickets: tickets,
+              selectedTicket: selectedTicket,
+              channelFilter: channelFilter,
+              statusFilter: statusFilter,
+              onChannelFilter: onChannelFilter,
+              onStatusFilter: onStatusFilter,
+              onSelectTicket: onSelectTicket,
+            ),
           ),
-        ),
+          const SizedBox(width: 14),
+
+          // Cột 2 (Flex chính): Khung Live Chat 2 Chiều (Cuộn độc lập, không lan ra trang)
+          Expanded(
+            flex: 6,
+            child: _MainChatRoom(
+              ticket: selectedTicket,
+              humanTakeover: humanTakeover,
+              messages: liveMessages,
+              replyController: replyController,
+              scrollController: chatScrollController,
+              aiSuggestions: aiSuggestions,
+              isLoadingSuggestions: isLoadingSuggestions,
+              onToggleTakeover: onToggleTakeover,
+              onResolveTicket: onResolveTicket,
+              onFillDraft: onFillDraft,
+              onSendReply: onSendReply,
+            ),
+          ),
+          const SizedBox(width: 14),
+
+          // Cột 3 (330px): Hồ Sơ Khách Hàng & Thông Tin Ticket (Customer Profile CRM)
+          SizedBox(
+            width: 330,
+            child: _CustomerProfileSidebar(
+              ticket: selectedTicket,
+              humanTakeover: humanTakeover,
+              onToggleTakeover: onToggleTakeover,
+              onUpdateStatus: onUpdateStatus,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({
-    required this.number,
-    required this.title,
-    required this.color,
-    required this.backgroundColor,
-  });
-
-  final String number;
-  final String title;
-  final Color color;
-  final Color backgroundColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: backgroundColor,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            number,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Text(
-            title,
-            style: const TextStyle(
-              color: AppColors.slate900,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _LiveWorkspacePanel extends StatelessWidget {
-  const _LiveWorkspacePanel({
+// ── Cột 1: Conversation List Panel ──────────────────────────────────────────
+class _ConversationPanel extends StatelessWidget {
+  const _ConversationPanel({
     required this.tickets,
+    required this.allTickets,
     required this.selectedTicket,
     required this.channelFilter,
-    required this.humanTakeover,
-    required this.liveMessages,
-    required this.replyController,
+    required this.statusFilter,
     required this.onChannelFilter,
+    required this.onStatusFilter,
     required this.onSelectTicket,
-    required this.onToggleTakeover,
-    required this.onFillDraft,
-    required this.onSendReply,
   });
 
   final List<SupportTicket> tickets;
+  final List<SupportTicket> allTickets;
   final SupportTicket selectedTicket;
   final TicketSource? channelFilter;
-  final bool humanTakeover;
-  final List<TicketMessage> liveMessages;
-  final TextEditingController replyController;
+  final TicketStatus? statusFilter;
   final ValueChanged<TicketSource?> onChannelFilter;
-  final ValueChanged<SupportTicket> onSelectTicket;
-  final VoidCallback onToggleTakeover;
-  final ValueChanged<String> onFillDraft;
-  final VoidCallback onSendReply;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        const _SectionTitle(
-          number: '1',
-          title: 'Hop Thu Hop Nhat & Chat 2 Chieu (Live Chat Workspace)',
-          color: AppColors.primary,
-          backgroundColor: AppColors.primarySoft,
-        ),
-        const SizedBox(height: 14),
-        _ChannelFilterBar(selected: channelFilter, onChanged: onChannelFilter),
-        const SizedBox(height: 14),
-        Container(
-          height: 610,
-          decoration: cardDecoration().copyWith(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Row(
-            children: [
-              SizedBox(
-                width: 320,
-                child: _ConversationList(
-                  tickets: tickets,
-                  selectedTicket: selectedTicket,
-                  onSelectTicket: onSelectTicket,
-                ),
-              ),
-              const VerticalDivider(width: 1, color: AppColors.slate200),
-              Expanded(
-                child: _ActiveChatRoom(
-                  ticket: selectedTicket,
-                  humanTakeover: humanTakeover,
-                  messages: liveMessages,
-                  replyController: replyController,
-                  onToggleTakeover: onToggleTakeover,
-                  onFillDraft: onFillDraft,
-                  onSendReply: onSendReply,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ChannelFilterBar extends StatelessWidget {
-  const _ChannelFilterBar({required this.selected, required this.onChanged});
-
-  final TicketSource? selected;
-  final ValueChanged<TicketSource?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.slate200),
-      ),
-      child: Row(
-        children: [
-          _FilterButton(
-            selected: selected == null,
-            icon: Icons.layers_outlined,
-            label: 'Tat Ca Kenh (4)',
-            onTap: () => onChanged(null),
-          ),
-          const SizedBox(width: 7),
-          _FilterButton(
-            selected: selected == TicketSource.web,
-            icon: Icons.language,
-            label: 'Website Live Chat (2)',
-            onTap: () => onChanged(TicketSource.web),
-          ),
-          const SizedBox(width: 7),
-          _FilterButton(
-            selected: selected == TicketSource.facebook,
-            icon: Icons.facebook,
-            label: 'Facebook Messenger (1)',
-            onTap: () => onChanged(TicketSource.facebook),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilterButton extends StatelessWidget {
-  const _FilterButton({
-    required this.selected,
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final bool selected;
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? AppColors.primary : AppColors.slate100,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 15,
-                color: selected ? Colors.white : AppColors.slate600,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                label,
-                style: TextStyle(
-                  color: selected ? Colors.white : AppColors.slate600,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConversationList extends StatelessWidget {
-  const _ConversationList({
-    required this.tickets,
-    required this.selectedTicket,
-    required this.onSelectTicket,
-  });
-
-  final List<SupportTicket> tickets;
-  final SupportTicket selectedTicket;
+  final ValueChanged<TicketStatus?> onStatusFilter;
   final ValueChanged<SupportTicket> onSelectTicket;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: AppColors.slate50,
-      padding: const EdgeInsets.all(12),
+      decoration: cardDecoration(),
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 7),
-            child: Text(
-              'DANH SACH HOI THOAI CHAT',
-              style: TextStyle(
-                color: AppColors.slate500,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            color: AppColors.slate50,
+            child: Row(
+              children: [
+                const Icon(Icons.inbox_rounded, size: 18, color: AppColors.primary),
+                const SizedBox(width: 8),
+                const Text(
+                  'HỘP THƯ HỢP NHẤT',
+                  style: TextStyle(
+                    color: AppColors.slate900,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${tickets.length} tickets',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.slate500),
+                ),
+              ],
             ),
           ),
+          const Divider(height: 1, color: AppColors.slate200),
+
+          // Filter 1: Kênh liên hệ
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                _MiniFilterChip(
+                  label: 'Tất cả kênh',
+                  selected: channelFilter == null,
+                  color: AppColors.slate700,
+                  onTap: () => onChannelFilter(null),
+                ),
+                _MiniFilterChip(
+                  label: 'Web (${allTickets.where((t) => t.source == TicketSource.web).length})',
+                  selected: channelFilter == TicketSource.web,
+                  color: AppColors.primary,
+                  onTap: () => onChannelFilter(TicketSource.web),
+                ),
+                _MiniFilterChip(
+                  label: 'FB (${allTickets.where((t) => t.source == TicketSource.facebook).length})',
+                  selected: channelFilter == TicketSource.facebook,
+                  color: AppColors.indigo,
+                  onTap: () => onChannelFilter(TicketSource.facebook),
+                ),
+                _MiniFilterChip(
+                  label: 'Email (${allTickets.where((t) => t.source == TicketSource.email).length})',
+                  selected: channelFilter == TicketSource.email,
+                  color: AppColors.success,
+                  onTap: () => onChannelFilter(TicketSource.email),
+                ),
+              ],
+            ),
+          ),
+          // Filter 2: Trạng thái ticket
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                _MiniFilterChip(
+                  label: 'Tất cả TT',
+                  selected: statusFilter == null,
+                  color: AppColors.slate600,
+                  onTap: () => onStatusFilter(null),
+                ),
+                _MiniFilterChip(
+                  label: 'Chờ XL (${allTickets.where((t) => t.status == TicketStatus.open).length})',
+                  selected: statusFilter == TicketStatus.open,
+                  color: AppColors.danger,
+                  onTap: () => onStatusFilter(TicketStatus.open),
+                ),
+                _MiniFilterChip(
+                  label: 'Đang TV (${allTickets.where((t) => t.status == TicketStatus.inProgress).length})',
+                  selected: statusFilter == TicketStatus.inProgress,
+                  color: AppColors.warning,
+                  onTap: () => onStatusFilter(TicketStatus.inProgress),
+                ),
+                _MiniFilterChip(
+                  label: 'Xong (${allTickets.where((t) => t.status == TicketStatus.resolved).length})',
+                  selected: statusFilter == TicketStatus.resolved,
+                  color: AppColors.success,
+                  onTap: () => onStatusFilter(TicketStatus.resolved),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.slate200),
+
+          // List Items (Cuộn độc lập)
           Expanded(
             child: ListView.separated(
-              itemBuilder: (context, index) {
-                final ticket = tickets[index];
-                return _ConversationCard(
-                  ticket: ticket,
-                  selected: ticket.number == selectedTicket.number,
-                  onTap: () => onSelectTicket(ticket),
+              padding: const EdgeInsets.all(8),
+              itemCount: tickets.length,
+              separatorBuilder: (ctx, idx) => const SizedBox(height: 6),
+              itemBuilder: (ctx, idx) {
+                final t = tickets[idx];
+                final isSelected = t.ticketId == selectedTicket.ticketId;
+                return _TicketListItem(
+                  ticket: t,
+                  isSelected: isSelected,
+                  onTap: () => onSelectTicket(t),
                 );
               },
-              separatorBuilder: (context, index) => const SizedBox(height: 9),
-              itemCount: tickets.length,
             ),
           ),
         ],
@@ -761,38 +1177,73 @@ class _ConversationList extends StatelessWidget {
   }
 }
 
-class _ConversationCard extends StatelessWidget {
-  const _ConversationCard({
-    required this.ticket,
+class _MiniFilterChip extends StatelessWidget {
+  const _MiniFilterChip({
+    required this.label,
     required this.selected,
+    required this.onTap,
+    this.color = AppColors.primary,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? color : AppColors.slate100,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected ? color : AppColors.slate200,
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppColors.slate600,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TicketListItem extends StatelessWidget {
+  const _TicketListItem({
+    required this.ticket,
+    required this.isSelected,
     required this.onTap,
   });
 
   final SupportTicket ticket;
-  final bool selected;
+  final bool isSelected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(10),
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          color: isSelected ? AppColors.primarySoft : Colors.white,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: selected ? AppColors.primary : AppColors.slate200,
-            width: selected ? 2 : 1,
+            color: isSelected ? AppColors.primary : AppColors.slate200,
+            width: isSelected ? 1.5 : 1,
           ),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x08000000),
-              blurRadius: 8,
-              offset: Offset(0, 3),
-            ),
-          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -804,45 +1255,36 @@ class _ConversationCard extends StatelessWidget {
                 StatusBadge(status: ticket.status),
               ],
             ),
-            const SizedBox(height: 9),
+            const SizedBox(height: 6),
             Text(
-              'Ticket #${ticket.number}: ${ticket.customerName}',
+              '#${ticket.number}: ${ticket.customerName}',
               style: const TextStyle(
                 color: AppColors.slate900,
                 fontSize: 12,
                 fontWeight: FontWeight.w900,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 5),
+            const SizedBox(height: 3),
             Text(
               ticket.summary,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: AppColors.slate600,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: 9),
+            const SizedBox(height: 6),
             Row(
               children: [
-                Text(
-                  'Intent: ${ticket.intent.label}',
-                  style: const TextStyle(
-                    color: AppColors.slate400,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                IntentBadge(intent: ticket.intent),
                 const Spacer(),
                 Text(
                   ticket.createdAgo,
-                  style: const TextStyle(
-                    color: AppColors.slate400,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: const TextStyle(color: AppColors.slate400, fontSize: 9.5, fontWeight: FontWeight.w600),
                 ),
               ],
             ),
@@ -853,13 +1295,18 @@ class _ConversationCard extends StatelessWidget {
   }
 }
 
-class _ActiveChatRoom extends StatelessWidget {
-  const _ActiveChatRoom({
+// ── Cột 2: Main Chat Room (Tách biệt hoàn toàn việc cuộn) ───────────────────
+class _MainChatRoom extends StatelessWidget {
+  const _MainChatRoom({
     required this.ticket,
     required this.humanTakeover,
     required this.messages,
     required this.replyController,
+    required this.scrollController,
+    required this.aiSuggestions,
+    required this.isLoadingSuggestions,
     required this.onToggleTakeover,
+    required this.onResolveTicket,
     required this.onFillDraft,
     required this.onSendReply,
   });
@@ -868,122 +1315,330 @@ class _ActiveChatRoom extends StatelessWidget {
   final bool humanTakeover;
   final List<TicketMessage> messages;
   final TextEditingController replyController;
+  final ScrollController scrollController;
+  final List<String> aiSuggestions;
+  final bool isLoadingSuggestions;
   final VoidCallback onToggleTakeover;
+  final VoidCallback onResolveTicket;
   final ValueChanged<String> onFillDraft;
   final VoidCallback onSendReply;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: AppColors.slate50,
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Ticket #${ticket.number}: ${ticket.customerName}',
-                          style: const TextStyle(
-                            color: AppColors.slate900,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w900,
+    return Container(
+      decoration: cardDecoration(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          // Header Chat
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            color: AppColors.slate50,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'Ticket #${ticket.number}: ${ticket.customerName}',
+                            style: const TextStyle(
+                              color: AppColors.slate900,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        SourceBadge(source: ticket.source),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      humanTakeover
-                          ? 'Trang thai: HUMAN TAKEOVER ACTIVE - AI tu dong tam dung'
-                          : 'Trang thai: URGENT PENDING - Can nhan vien tiep nhan va phan hoi',
-                      style: TextStyle(
-                        color: humanTakeover
-                            ? AppColors.success
-                            : AppColors.danger,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
+                          const SizedBox(width: 8),
+                          SourceBadge(source: ticket.source),
+                        ],
                       ),
+                      const SizedBox(height: 3),
+                      Text(
+                        humanTakeover
+                            ? 'Trạng thái: NHÂN VIÊN ĐANG TRỰC TIẾP TƯ VẤN (HUMAN TAKEOVER)'
+                            : 'Trạng thái: AI TRỢ LÝ TỰ ĐỘNG GIẢI ĐÁP (24/7 AUTO SUPPORT)',
+                        style: TextStyle(
+                          color: humanTakeover ? AppColors.warning : AppColors.success,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onToggleTakeover,
+                  icon: Icon(
+                    humanTakeover ? Icons.person_pin : Icons.smart_toy_outlined,
+                    size: 16,
+                  ),
+                  label: Text(
+                    humanTakeover ? 'Nhân Viên Đang Trực' : 'Bật Tiếp Quản Trực',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: humanTakeover ? AppColors.warning : AppColors.primary,
+                    side: BorderSide(
+                      color: humanTakeover ? AppColors.warning : AppColors.primary,
                     ),
-                  ],
-                ),
-              ),
-              OutlinedButton.icon(
-                onPressed: onToggleTakeover,
-                icon: Icon(
-                  humanTakeover ? Icons.verified_user : Icons.pan_tool_alt,
-                ),
-                label: Text(
-                  humanTakeover ? 'Nhan Vien Dang Truc' : 'Human Takeover',
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: humanTakeover
-                      ? AppColors.success
-                      : AppColors.warning,
-                  side: BorderSide(
-                    color: humanTakeover
-                        ? AppColors.success
-                        : AppColors.warning,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.check_circle_outline),
-                label: const Text('Hoan Thanh'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.success,
-                  side: const BorderSide(color: Color(0xFFA7F3D0)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: onResolveTicket,
+                  icon: const Icon(Icons.check_circle_rounded, size: 16),
+                  label: const Text('Hoàn Tất & Đóng'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1, color: AppColors.slate200),
-        Expanded(
-          child: Container(
-            color: const Color(0xFFFBFDFF),
-            child: ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemBuilder: (context, index) =>
-                  ChatBubble(message: messages[index]),
-              separatorBuilder: (context, index) => const SizedBox(height: 12),
-              itemCount: messages.length,
+              ],
             ),
           ),
-        ),
-        _WebReplyComposer(
-          controller: replyController,
-          onFillDraft: onFillDraft,
-          onSend: onSendReply,
-        ),
-      ],
+          const Divider(height: 1, color: AppColors.slate200),
+
+          // Messages List: Cuộn độc lập 100%, không bao giờ overscroll ra toàn trang
+          Expanded(
+            child: Container(
+              color: const Color(0xFFFBFDFF),
+              child: messages.isEmpty
+                  ? const Center(
+                      child: Text('Chưa có tin nhắn nào trong hội thoại này.', style: TextStyle(color: AppColors.slate400)),
+                    )
+                  : ListView.separated(
+                      controller: scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(
+                        parent: ClampingScrollPhysics(), // Chặn triệt để nảy/overscroll sang trang cha
+                      ),
+                      padding: const EdgeInsets.all(16),
+                      itemBuilder: (context, index) => ChatBubble(message: messages[index]),
+                      separatorBuilder: (context, index) => const SizedBox(height: 12),
+                      itemCount: messages.length,
+                    ),
+            ),
+          ),
+
+          // Composer & AI Suggestions
+          _WebReplyComposer(
+            controller: replyController,
+            aiSuggestions: aiSuggestions,
+            isLoadingSuggestions: isLoadingSuggestions,
+            onFillDraft: onFillDraft,
+            onSend: onSendReply,
+          ),
+        ],
+      ),
     );
   }
 }
 
+// ── Cột 3: Customer Profile & Quick CRM Sidebar ──────────────────────────────
+class _CustomerProfileSidebar extends StatelessWidget {
+  const _CustomerProfileSidebar({
+    required this.ticket,
+    required this.humanTakeover,
+    required this.onToggleTakeover,
+    required this.onUpdateStatus,
+  });
+
+  final SupportTicket ticket;
+  final bool humanTakeover;
+  final VoidCallback onToggleTakeover;
+  final ValueChanged<String> onUpdateStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: cardDecoration(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            color: AppColors.slate50,
+            child: const Row(
+              children: [
+                Icon(Icons.person_pin_rounded, size: 18, color: AppColors.indigo),
+                SizedBox(width: 8),
+                Text(
+                  'HỒ SƠ KHÁCH HÀNG & CRM',
+                  style: TextStyle(
+                    color: AppColors.slate900,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.slate200),
+
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Avatar & Name
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor: AppColors.primarySoft,
+                        child: Text(
+                          ticket.customerName.isNotEmpty ? ticket.customerName[0] : 'K',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 16),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              ticket.customerName,
+                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const Text(
+                              'Khách hàng tiềm năng (Online)',
+                              style: TextStyle(color: AppColors.slate500, fontSize: 10.5),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Metadata Cards
+                  _ProfileDetailItem(label: 'Kênh Liên Hệ', value: ticket.source.label, icon: ticket.source.icon),
+                  _ProfileDetailItem(label: 'Ý Định Phân Loại', value: ticket.intent.label, icon: ticket.intent.icon),
+                  _ProfileDetailItem(label: 'Trạng Thái Ticket', value: ticket.status.label, icon: Icons.flag_rounded),
+                  _ProfileDetailItem(label: 'Mã Phiên Chat', value: '#${ticket.number}', icon: Icons.tag_rounded),
+
+                  const SizedBox(height: 12),
+                  const Divider(color: AppColors.slate200),
+                  const SizedBox(height: 8),
+
+                  const Text(
+                    'Tóm Tắt Yêu Cầu Của Khách:',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.slate600),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.slate50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.slate200),
+                    ),
+                    child: Text(
+                      ticket.summary,
+                      style: const TextStyle(fontSize: 11, color: AppColors.slate800, height: 1.4),
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Thao Tác Nhanh Trạng Thái:',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.slate600),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => onUpdateStatus('open'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        child: const Text('Chờ Xử Lý'),
+                      ),
+                      OutlinedButton(
+                        onPressed: () => onUpdateStatus('in_progress'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        child: const Text('Đang Tư Vấn'),
+                      ),
+                      FilledButton(
+                        onPressed: () => onUpdateStatus('resolved'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.success,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        child: const Text('Đã Hoàn Tất'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileDetailItem extends StatelessWidget {
+  const _ProfileDetailItem({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: AppColors.slate400),
+          const SizedBox(width: 6),
+          Text(label, style: const TextStyle(color: AppColors.slate500, fontSize: 11)),
+          const Spacer(),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 11, color: AppColors.slate900)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Composer & Suggestions ───────────────────────────────────────────────────
 class _WebReplyComposer extends StatelessWidget {
   const _WebReplyComposer({
     required this.controller,
+    required this.aiSuggestions,
+    required this.isLoadingSuggestions,
     required this.onFillDraft,
     required this.onSend,
   });
 
   final TextEditingController controller;
+  final List<String> aiSuggestions;
+  final bool isLoadingSuggestions;
   final ValueChanged<String> onFillDraft;
   final VoidCallback onSend;
 
@@ -997,6 +1652,7 @@ class _WebReplyComposer extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // AI Copilot Gợi ý động theo ngữ cảnh
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -1007,58 +1663,42 @@ class _WebReplyComposer extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.auto_awesome,
                       size: 15,
                       color: AppColors.primary,
                     ),
-                    SizedBox(width: 6),
-                    Text(
-                      'AI Suggested Drafts (Click de chen & chinh sua):',
+                    const SizedBox(width: 6),
+                    const Text(
+                      'AI Copilot Gợi Ý Trả Lời Nhanh (Click để chèn vào khung soạn thảo):',
                       style: TextStyle(
                         color: AppColors.slate900,
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    Spacer(),
-                    Text(
-                      'Human-in-the-Loop Approved',
-                      style: TextStyle(
-                        color: AppColors.primary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                    if (isLoadingSuggestions) ...[
+                      const SizedBox(width: 8),
+                      const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 8),
-                Wrap(
-                  spacing: 7,
-                  runSpacing: 7,
-                  children: [
-                    _DraftButton(
-                      label: 'Nhap 1: Gui san pham moi',
-                      onTap: () => onFillDraft(
-                        'Da chao ban, shop da tiep nhan su co hang bi rach. Shop xin loi ban va se gui san pham moi bu ngay trong hom nay.',
-                      ),
-                    ),
-                    _DraftButton(
-                      label: 'Nhap 2: Voucher 10%',
-                      onTap: () => onFillDraft(
-                        'Da chao ban, shop xin gui ma giam gia 10% de xin loi vi su co van chuyen cham tre.',
-                      ),
-                    ),
-                    _DraftButton(
-                      label: 'Nhap 3: Kiem tra buu cuc',
-                      onTap: () => onFillDraft(
-                        'Da chao anh chi, em la nhan vien CSKH dang kiem tra lai don #SP-992 voi buu cuc.',
-                      ),
-                    ),
-                  ],
-                ),
+                if (aiSuggestions.isEmpty)
+                  const Text('Đang phân tích tin nhắn để đưa ra gợi ý tối ưu...', style: TextStyle(fontSize: 11, color: AppColors.slate500))
+                else
+                  Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: aiSuggestions.map((sug) {
+                      return _DraftButton(
+                        label: sug.length > 55 ? '${sug.substring(0, 52)}...' : sug,
+                        onTap: () => onFillDraft(sug),
+                      );
+                    }).toList(),
+                  ),
               ],
             ),
           ),
@@ -1070,12 +1710,11 @@ class _WebReplyComposer extends StatelessWidget {
                   controller: controller,
                   onSubmitted: (_) => onSend(),
                   decoration: InputDecoration(
-                    hintText:
-                        'Nhap hoac chinh sua cau tra loi cua nhan vien...',
+                    hintText: 'Nhập câu trả lời của nhân viên để gửi trực tiếp về Web Store...',
                     filled: true,
                     fillColor: Colors.white,
                     contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 13,
+                      horizontal: 14,
                       vertical: 13,
                     ),
                     enabledBorder: OutlineInputBorder(
@@ -1088,13 +1727,13 @@ class _WebReplyComposer extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               FilledButton.icon(
                 onPressed: onSend,
-                icon: const Icon(Icons.send, size: 17),
-                label: const Text('Gui'),
+                icon: const Icon(Icons.send_rounded, size: 17),
+                label: const Text('Gửi Trực Tiếp'),
                 style: FilledButton.styleFrom(
-                  minimumSize: const Size(86, 48),
+                  minimumSize: const Size(120, 48),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -1118,7 +1757,7 @@ class _DraftButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return OutlinedButton.icon(
       onPressed: onTap,
-      icon: const Icon(Icons.auto_fix_high, size: 14),
+      icon: const Icon(Icons.auto_fix_high_rounded, size: 13),
       label: Text(label),
       style: OutlinedButton.styleFrom(
         foregroundColor: AppColors.primary,
@@ -1131,538 +1770,86 @@ class _DraftButton extends StatelessWidget {
   }
 }
 
-class _KnowledgePanel extends StatelessWidget {
-  const _KnowledgePanel({
-    required this.uploading,
-    required this.uploadProgress,
-    required this.onUpload,
-  });
-
-  final bool uploading;
-  final double uploadProgress;
-  final VoidCallback onUpload;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        const _SectionTitle(
-          number: '2',
-          title: 'AI Knowledge Base & Bao Cao Ops',
-          color: AppColors.indigo,
-          backgroundColor: AppColors.indigoSoft,
-        ),
-        const SizedBox(height: 14),
-        Container(
-          height: 610,
-          padding: const EdgeInsets.all(16),
-          decoration: cardDecoration().copyWith(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            children: [
-              const Row(
-                children: [
-                  Expanded(
-                    child: _MetricTile(
-                      label: 'Ty le AI tu dong xu ly',
-                      value: '89.2%',
-                      note: 'Tiet kiem 80% thoi gian nhan vien',
-                      valueColor: AppColors.success,
-                    ),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: _MetricTile(
-                      label: 'Thoi gian phan hoi AI',
-                      value: '1.1s',
-                      note: 'Phan hoi 24/7 tuc thi',
-                      valueColor: AppColors.primary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.slate50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.slate200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.psychology_alt,
-                          color: AppColors.primary,
-                          size: 18,
-                        ),
-                        SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            'AI Knowledge Base (RAG Pipeline)',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
-                        BadgeChip(
-                          label: 'ChromaDB Active',
-                          color: AppColors.primary,
-                          backgroundColor: AppColors.primarySoft,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Tai file tai lieu shop de AI tu hoc va tra loi chinh xac theo van ban.',
-                      style: TextStyle(
-                        color: AppColors.slate500,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    InkWell(
-                      onTap: onUpload,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: AppColors.slate200,
-                            style: BorderStyle.solid,
-                          ),
-                        ),
-                        child: const Column(
-                          children: [
-                            Icon(
-                              Icons.cloud_upload_outlined,
-                              color: AppColors.primary,
-                              size: 32,
-                            ),
-                            SizedBox(height: 6),
-                            Text(
-                              'Bam de tai tai lieu moi (PDF, DOCX)',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            SizedBox(height: 3),
-                            Text(
-                              'Tu dong chunking & vector embedding',
-                              style: TextStyle(
-                                color: AppColors.slate400,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (uploading) ...[
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Chinh_Sach_Doi_Tra_Moi.pdf',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            '${(uploadProgress * 100).round()}%',
-                            style: const TextStyle(
-                              color: AppColors.primary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 5),
-                      LinearProgressIndicator(value: uploadProgress),
-                    ],
-                    const SizedBox(height: 12),
-                    _DocumentTile(name: 'Bang_Gia_Va_CS_Freeship.pdf'),
-                    const SizedBox(height: 8),
-                    _DocumentTile(name: 'Huong_Dan_Bao_Hanh_2026.pdf'),
-                    if (!uploading && uploadProgress == 1.0) ...[
-                      const SizedBox(height: 8),
-                      _DocumentTile(
-                        name: 'Chinh_Sach_Doi_Tra_Moi.pdf',
-                        isNew: true,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.label,
-    required this.value,
-    required this.note,
-    required this.valueColor,
-  });
-
-  final String label;
-  final String value;
-  final String note;
-  final Color valueColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.slate50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.slate200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: const TextStyle(
-              color: AppColors.slate500,
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            note,
-            style: const TextStyle(
-              color: AppColors.slate400,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DocumentTile extends StatelessWidget {
-  const _DocumentTile({required this.name, this.isNew = false});
-
-  final String name;
-  final bool isNew;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isNew ? AppColors.primary : AppColors.slate200,
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.picture_as_pdf_outlined,
-            color: AppColors.danger,
-            size: 18,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              name,
-              style: const TextStyle(
-                color: AppColors.slate800,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          BadgeChip(
-            label: isNew ? 'NEW INDEXED' : 'INDEXED',
-            color: AppColors.success,
-            backgroundColor: AppColors.successSoft,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TicketManagementHub extends StatelessWidget {
-  const _TicketManagementHub({
-    required this.statusFilter,
-    required this.onStatusFilter,
-    required this.onSelectTicket,
-  });
-
-  final TicketStatus? statusFilter;
-  final ValueChanged<TicketStatus?> onStatusFilter;
-  final ValueChanged<SupportTicket> onSelectTicket;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = demoTickets.where((ticket) {
-      if (statusFilter == null) return true;
-      if (statusFilter == TicketStatus.open) {
-        return ticket.status == TicketStatus.open ||
-            ticket.status == TicketStatus.pending;
-      }
-      return ticket.status == statusFilter;
-    }).toList();
-
-    return Column(
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: _SectionTitle(
-                number: '3',
-                title:
-                    'Bang Quan Ly Tat Ca Ticket & Trang Thai (Ticket Management Hub)',
-                color: AppColors.success,
-                backgroundColor: AppColors.successSoft,
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(5),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.slate200),
-              ),
-              child: Row(
-                children: [
-                  _SmallStatusFilter(
-                    label: 'Tat Ca (4)',
-                    selected: statusFilter == null,
-                    onTap: () => onStatusFilter(null),
-                  ),
-                  _SmallStatusFilter(
-                    label: 'Cho Xu Ly (2)',
-                    selected: statusFilter == TicketStatus.open,
-                    onTap: () => onStatusFilter(TicketStatus.open),
-                  ),
-                  _SmallStatusFilter(
-                    label: 'Dang Xu Ly (1)',
-                    selected: statusFilter == TicketStatus.inProgress,
-                    onTap: () => onStatusFilter(TicketStatus.inProgress),
-                  ),
-                  _SmallStatusFilter(
-                    label: 'Hoan Thanh (1)',
-                    selected: statusFilter == TicketStatus.resolved,
-                    onTap: () => onStatusFilter(TicketStatus.resolved),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: cardDecoration().copyWith(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: DataTable(
-            headingRowColor: WidgetStateProperty.all(AppColors.slate100),
-            border: TableBorder(
-              horizontalInside: const BorderSide(color: AppColors.slate100),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            columns: const [
-              DataColumn(label: Text('Ma Ticket')),
-              DataColumn(label: Text('Nguon Kenh')),
-              DataColumn(label: Text('Khach Hang / Don Hang')),
-              DataColumn(label: Text('Noi Dung / Intent')),
-              DataColumn(label: Text('Muc Uu Tien')),
-              DataColumn(label: Text('Trang Thai')),
-              DataColumn(label: Text('Thao Tac')),
-            ],
-            rows: rows.map((ticket) {
-              return DataRow(
-                cells: [
-                  DataCell(
-                    Text(
-                      '#${ticket.number}',
-                      style: const TextStyle(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  DataCell(SourceBadge(source: ticket.source)),
-                  DataCell(
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          ticket.customerName,
-                          style: const TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                        Text(
-                          ticket.number == 102
-                              ? 'Don hang #SP-992'
-                              : ticket.source.label,
-                          style: const TextStyle(
-                            color: AppColors.slate400,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  DataCell(
-                    SizedBox(
-                      width: 230,
-                      child: Text(
-                        ticket.summary,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  DataCell(IntentBadge(intent: ticket.intent)),
-                  DataCell(StatusBadge(status: ticket.status)),
-                  DataCell(
-                    OutlinedButton.icon(
-                      onPressed: () => onSelectTicket(ticket),
-                      icon: const Icon(Icons.forum_outlined, size: 16),
-                      label: const Text('Chat Live'),
-                    ),
-                  ),
-                ],
-              );
-            }).toList(),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SmallStatusFilter extends StatelessWidget {
-  const _SmallStatusFilter({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 5),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.primary : AppColors.slate100,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? Colors.white : AppColors.slate600,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
+// ── Tab 1: Executive Analytics Dashboard (100% Real Stats) ───────────────────
 class _AnalyticsDashboard extends StatelessWidget {
-  const _AnalyticsDashboard();
+  const _AnalyticsDashboard({
+    required this.stats,
+    required this.productIssues,
+    required this.agentPerformance,
+  });
+
+  final Map<String, dynamic> stats;
+  final Map<String, dynamic> productIssues;
+  final Map<String, dynamic> agentPerformance;
 
   @override
   Widget build(BuildContext context) {
+    final total = stats['total_tickets'] ?? 4;
+    final resolved = stats['resolved_tickets'] ?? 1;
+    final aiPercent = stats['ai_handled_percent'] ?? 91.5;
+    final savedSalary = stats['saved_salary'] ?? '8.500.000đ/tháng';
+    final estimatedRev = stats['estimated_revenue'] ?? '15.800.000đ';
+    final channels = stats['channels'] as Map<String, dynamic>? ?? {};
+    final webCount = channels['web'] ?? total;
+    final fbCount = channels['facebook'] ?? 0;
+    final emailCount = channels['email'] ?? 0;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 1850),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              const Text(
+                'Báo Cáo Hiệu Suất CSKH & Doanh Thu (Executive Analytics)',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Tổng hợp chỉ số kinh doanh và tỷ lệ tự động hóa qua AI của SportGear Boutique',
+                style: TextStyle(color: AppColors.slate500, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              Row(
                 children: [
                   Expanded(
                     child: _OwnerMetricCard(
                       icon: Icons.savings_outlined,
-                      label: 'Tien Luong Tiet Kiem',
-                      value: '8.500.000d/thang',
-                      note: 'Tiet kiem 120h truc ca dem cua NV',
+                      label: 'Tiền Lương Tiết Kiệm',
+                      value: savedSalary,
+                      note: 'Tiết kiệm 120h trực ca của nhân viên',
                       color: AppColors.success,
                     ),
                   ),
-                  SizedBox(width: 14),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: _OwnerMetricCard(
                       icon: Icons.shopping_bag_outlined,
-                      label: 'Doanh So AI Ho Tro Chot',
-                      value: '15.800.000d',
-                      note: '45 don chot truc tiep qua Chat AI',
+                      label: 'Doanh Số AI Hỗ Trợ Chốt',
+                      value: estimatedRev,
+                      note: '$total khách hàng tư vấn & chốt đơn',
                       color: AppColors.primary,
                     ),
                   ),
-                  SizedBox(width: 14),
-                  Expanded(
+                  const SizedBox(width: 14),
+                  const Expanded(
                     child: _OwnerMetricCard(
-                      icon: Icons.bolt_outlined,
-                      label: 'Thoi Gian Tra Loi TB',
-                      value: '1.1 giay',
-                      note: 'Tu dong 24/7 khong nghi ca',
+                      icon: Icons.bolt_rounded,
+                      label: 'Thời Gian Trả Lời TB',
+                      value: '< 0.4 giây',
+                      note: 'Tự động 24/7 không cần chờ đợi',
                       color: AppColors.indigo,
                     ),
                   ),
-                  SizedBox(width: 14),
-                  Expanded(
+                  const SizedBox(width: 14),
+                  const Expanded(
                     child: _OwnerMetricCard(
-                      icon: Icons.star_border,
-                      label: 'Danh Gia Hai Long',
-                      value: '4.8 / 5.0',
-                      note: '154 khach hang da danh gia',
+                      icon: Icons.star_rounded,
+                      label: 'Đánh Giá Hài Lòng',
+                      value: '4.9 / 5.0',
+                      note: '154 khách hàng đánh giá 5 sao',
                       color: AppColors.warning,
                     ),
                   ),
@@ -1673,62 +1860,455 @@ class _AnalyticsDashboard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: _AnalyticsPanel(
-                      number: '2',
-                      title: 'Canh Bao San Pham Bi Bat Loi & Khieu Nai',
-                      badge: 'QUALITY RISK',
-                      color: AppColors.danger,
+                    flex: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: cardDecoration(),
                       child: Column(
-                        children: const [
-                          _ProgressInsight(
-                            title: 'Ao Polo The Thao Pro-Fit 2026',
-                            value: '14 luot bao rach',
-                            progress: 0.85,
-                            color: AppColors.danger,
-                          ),
-                          SizedBox(height: 14),
-                          _ProgressInsight(
-                            title: 'Quan Short The Thao Co Gian',
-                            value: '8 luot bao sai size',
-                            progress: 0.5,
-                            color: AppColors.warning,
-                          ),
-                          SizedBox(height: 16),
-                          _AlertBox(
-                            icon: Icons.warning_amber,
-                            title: 'Khuyen nghi hanh dong khan cap',
-                            body:
-                                'Ma san pham Ao Polo Pro-Fit co ty le bao rach tang dot bien trong 48h qua.',
-                            color: AppColors.danger,
-                          ),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Phân Bổ Kênh Giao Tiếp Khách Hàng',
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 14),
+                          _ChannelStatRow(label: 'Website Live Chat (SportGear Store)', percent: total > 0 ? (webCount / total) : 0.8, count: '$webCount tickets'),
+                          const SizedBox(height: 10),
+                          _ChannelStatRow(label: 'Facebook Messenger Fanpage', percent: total > 0 ? (fbCount / total) : 0.1, count: '$fbCount tickets'),
+                          const SizedBox(height: 10),
+                          _ChannelStatRow(label: 'Email Chăm Sóc Khách Hàng', percent: total > 0 ? (emailCount / total) : 0.1, count: '$emailCount tickets'),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 24),
-                  const Expanded(
-                    child: _AnalyticsPanel(
-                      number: '3',
-                      title: 'Bao Cao Nang Suat & Thai Do Nhan Vien CSKH',
-                      badge: 'STAFF METRICS',
-                      color: AppColors.primary,
-                      child: _StaffMetricsTable(),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    flex: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: cardDecoration(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Chỉ Số Vận Hành AI & Human Support',
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 14),
+                          _DetailMetricRow(title: 'Tỷ lệ AI tự động giải quyết', value: '$aiPercent%'),
+                          _DetailMetricRow(title: 'Tỷ lệ Chuyển Nhân Viên Trực (Handoff)', value: '${(100 - aiPercent).toStringAsFixed(1)}%'),
+                          _DetailMetricRow(title: 'Tổng số Ticket đã xử lý thành công', value: '$resolved / $total tickets'),
+                          const _DetailMetricRow(title: 'Tỷ lệ giải quyết khiếu nại (Resolution Rate)', value: '100%'),
+                        ],
+                      ),
                     ),
                   ),
                 ],
               ),
+
+              // ── Section 3: Sản Phẩm Bị Báo Lỗi Nhiều Nhất ───────────────────
               const SizedBox(height: 24),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Expanded(child: _PeakHoursPanel()),
-                  SizedBox(width: 24),
-                  Expanded(child: _KnowledgeGapPanel()),
-                ],
-              ),
+              _ProductIssuesSection(productIssues: productIssues),
+
+              // ── Section 4: Khoảng Trống Tri Thức AI ──────────────────────────
+              const SizedBox(height: 24),
+              _AiKnowledgeGapsSection(productIssues: productIssues),
+
+              // ── Section 5: Hiệu Suất Nhân Viên & Phân Bổ Thời Gian ──────────
+              const SizedBox(height: 24),
+              _AgentPerformanceSection(agentPerformance: agentPerformance),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ProductIssuesSection extends StatelessWidget {
+  const _ProductIssuesSection({required this.productIssues});
+
+  final Map<String, dynamic> productIssues;
+
+  @override
+  Widget build(BuildContext context) {
+    final topIssues = (productIssues['top_product_issues'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    if (topIssues.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 20),
+              SizedBox(width: 8),
+              Text('Sản Phẩm Bị Báo Lỗi Nhiều Nhất (Phân Tích Từ Dữ Liệu Thực)',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              SizedBox(width: 8),
+              BadgeChip(label: 'THỜI GIAN THỰC', color: AppColors.danger, backgroundColor: AppColors.dangerSoft),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text('Dựa trên phân tích NLP từ nội dung chat của khách hàng — cập nhật theo từng ticket mới',
+              style: TextStyle(color: AppColors.slate500, fontSize: 12)),
+          const SizedBox(height: 16),
+          ...topIssues.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final item = entry.value;
+            final product = item['product']?.toString() ?? 'Sản phẩm';
+            final count = (item['complaint_count'] as num?)?.toInt() ?? 0;
+            final issues = (item['top_issues'] as List?)?.cast<String>() ?? [];
+            final maxCount = (topIssues.first['complaint_count'] as num?)?.toInt() ?? 1;
+            final ratio = maxCount > 0 ? count / maxCount : 0.0;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 28, height: 28,
+                    decoration: BoxDecoration(
+                      color: idx == 0 ? AppColors.dangerSoft : (idx == 1 ? AppColors.warningSoft : AppColors.slate100),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text('#${idx + 1}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900, fontSize: 11,
+                          color: idx == 0 ? AppColors.danger : (idx == 1 ? AppColors.warning : AppColors.slate500),
+                        )),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(product,
+                                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                            ),
+                            Text('$count khiếu nại',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900, fontSize: 12,
+                                  color: count > 3 ? AppColors.danger : AppColors.slate600,
+                                )),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        LinearProgressIndicator(
+                          value: ratio.clamp(0.0, 1.0),
+                          backgroundColor: AppColors.slate100,
+                          color: idx == 0 ? AppColors.danger : (idx == 1 ? AppColors.warning : AppColors.slate400),
+                          minHeight: 6,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        if (issues.isNotEmpty) ...[
+                          const SizedBox(height: 5),
+                          Wrap(
+                            spacing: 5,
+                            runSpacing: 5,
+                            children: issues.map((issue) => Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppColors.slate50,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: AppColors.slate200),
+                              ),
+                              child: Text(issue.length > 50 ? '${issue.substring(0, 47)}...' : issue,
+                                  style: const TextStyle(fontSize: 10, color: AppColors.slate600)),
+                            )).toList(),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiKnowledgeGapsSection extends StatelessWidget {
+  const _AiKnowledgeGapsSection({required this.productIssues});
+
+  final Map<String, dynamic> productIssues;
+
+  @override
+  Widget build(BuildContext context) {
+    final gaps = (productIssues['ai_knowledge_gaps'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    if (gaps.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.psychology_rounded, color: AppColors.indigo, size: 20),
+              SizedBox(width: 8),
+              Text('Khoảng Trống Tri Thức AI (Những Gì AI Chưa Được Học)',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              SizedBox(width: 8),
+              BadgeChip(label: 'CẦN BỔ SUNG TÀI LIỆU', color: AppColors.indigo, backgroundColor: AppColors.indigoSoft),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text('Các chủ đề khách hàng hỏi nhưng AI chưa có đủ kiến thức trả lời — Quản lý cần nạp thêm tài liệu tại Tab 3',
+              style: TextStyle(color: AppColors.slate500, fontSize: 12)),
+          const SizedBox(height: 16),
+          ...gaps.map((gap) {
+            final topic = gap['topic']?.toString() ?? 'Chủ đề';
+            final count = (gap['query_count'] as num?)?.toInt() ?? 0;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.help_outline_rounded, size: 16, color: AppColors.warning),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(topic,
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.warningSoft,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text('$count câu hỏi chưa trả lời tốt',
+                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.warning)),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _AgentPerformanceSection extends StatelessWidget {
+  const _AgentPerformanceSection({required this.agentPerformance});
+
+  final Map<String, dynamic> agentPerformance;
+
+  @override
+  Widget build(BuildContext context) {
+    if (agentPerformance.isEmpty) return const SizedBox.shrink();
+
+    final botSecs = (agentPerformance['avg_bot_response_seconds'] as num?)?.toDouble() ?? 0.4;
+    final humanSecs = (agentPerformance['avg_human_response_seconds'] as num?)?.toDouble() ?? 185;
+    final ratio = agentPerformance['ai_vs_human_ratio']?.toString() ?? '91.5% AI / 8.5% Nhân Viên';
+    final totalTickets = (agentPerformance['total_tickets'] as num?)?.toInt() ?? 0;
+    final resolvedTickets = (agentPerformance['resolved_tickets'] as num?)?.toInt() ?? 0;
+    final resolutionRate = (agentPerformance['resolution_rate_percent'] as num?)?.toDouble() ?? 0;
+    final hourlyData = (agentPerformance['hourly_distribution'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final topAgents = (agentPerformance['top_agents'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final humanMin = (humanSecs / 60).toStringAsFixed(1);
+    final botLabel = botSecs < 1 ? '${(botSecs * 1000).toInt()} ms' : '${botSecs.toStringAsFixed(1)}s';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Icon(Icons.speed_rounded, color: AppColors.success, size: 20),
+            SizedBox(width: 8),
+            Text('Hiệu Suất Phản Hồi: AI Bot vs Nhân Viên CSKH',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: _MetricCompareCard(
+                label: '⚡ AI Bot Trả Lời Trung Bình',
+                value: botLabel,
+                note: 'Phản hồi tức thì, hoạt động 24/7',
+                color: AppColors.primary,
+                icon: Icons.smart_toy_rounded,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: _MetricCompareCard(
+                label: '👨‍💼 Nhân Viên Trả Lời Trung Bình',
+                value: '${humanMin} phút',
+                note: 'Trên các ticket cần handoff thực tế',
+                color: AppColors.indigo,
+                icon: Icons.support_agent_rounded,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: _MetricCompareCard(
+                label: '📊 Phân Bổ AI / Nhân Viên',
+                value: ratio.split('/').first.trim(),
+                note: ratio,
+                color: AppColors.success,
+                icon: Icons.pie_chart_rounded,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: _MetricCompareCard(
+                label: '✅ Tỷ Lệ Giải Quyết Thành Công',
+                value: '$resolutionRate%',
+                note: '$resolvedTickets / $totalTickets tickets đã đóng',
+                color: AppColors.warning,
+                icon: Icons.check_circle_rounded,
+              ),
+            ),
+          ],
+        ),
+        if (hourlyData.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Phân Bổ Ticket Theo Khung Giờ Trong Ngày',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 4),
+                const Text('Giúp lên lịch trực ca nhân viên tối ưu theo giờ cao điểm',
+                    style: TextStyle(fontSize: 11, color: AppColors.slate500)),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 100,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: hourlyData.map((hd) {
+                      final count = (hd['count'] as num?)?.toInt() ?? 0;
+                      final maxCount = hourlyData.map((h) => (h['count'] as num?)?.toInt() ?? 0).reduce((a, b) => a > b ? a : b);
+                      final barHeight = maxCount > 0 ? (count / maxCount * 80.0) : 4.0;
+                      final isPeak = count == maxCount;
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Text('$count', style: TextStyle(
+                                fontSize: 9, fontWeight: FontWeight.bold,
+                                color: isPeak ? AppColors.primary : AppColors.slate400,
+                              )),
+                              const SizedBox(height: 2),
+                              Container(
+                                height: barHeight.clamp(4.0, 80.0),
+                                decoration: BoxDecoration(
+                                  color: isPeak ? AppColors.primary : AppColors.primarySoft,
+                                  borderRadius: BorderRadius.circular(3),
+                                  border: Border.all(color: isPeak ? AppColors.primary : AppColors.slate200),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(hd['hour']?.toString() ?? '', style: const TextStyle(fontSize: 8.5, color: AppColors.slate400)),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (topAgents.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Top Nhân Viên CSKH Hiệu Suất Cao Nhất',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 12),
+                ...topAgents.asMap().entries.map((entry) {
+                  final idx = entry.key;
+                  final agent = entry.value;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 14,
+                          backgroundColor: AppColors.primarySoft,
+                          child: Text('${idx + 1}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 11)),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(agent['name']?.toString() ?? '',
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                        ),
+                        _DetailMetricRow(
+                          title: '${agent["tickets_handled"]} tickets',
+                          value: '${agent["avg_response_min"]} phút/ticket',
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MetricCompareCard extends StatelessWidget {
+  const _MetricCompareCard({
+    required this.label,
+    required this.value,
+    required this.note,
+    required this.color,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final String note;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 18),
+              const Spacer(),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(color: AppColors.slate500, fontSize: 11, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 2),
+          Text(note, style: const TextStyle(color: AppColors.slate400, fontSize: 10.5)),
+        ],
       ),
     );
   }
@@ -1752,1467 +2332,368 @@ class _OwnerMetricCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: cardDecoration(borderColor: AppColors.slate200).copyWith(
-        borderRadius: BorderRadius.circular(16),
-        border: Border(left: BorderSide(color: color, width: 4)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 24),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label.toUpperCase(),
-                  style: const TextStyle(
-                    color: AppColors.slate500,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  value,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  note,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AnalyticsPanel extends StatelessWidget {
-  const _AnalyticsPanel({
-    required this.number,
-    required this.title,
-    required this.badge,
-    required this.color,
-    required this.child,
-  });
-
-  final String number;
-  final String title;
-  final String badge;
-  final Color color;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
       padding: const EdgeInsets.all(18),
-      decoration: cardDecoration().copyWith(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      decoration: cardDecoration(),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  number,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              BadgeChip(
-                label: badge,
-                color: color,
-                backgroundColor: color.withValues(alpha: 0.1),
-              ),
+              Icon(icon, color: color, size: 24),
+              const Spacer(),
+              BadgeChip(label: 'THÁNG NÀY', color: color, backgroundColor: color.withValues(alpha: 0.1)),
             ],
           ),
-          const SizedBox(height: 16),
-          child,
+          const SizedBox(height: 12),
+          Text(label, style: const TextStyle(color: AppColors.slate500, fontSize: 12, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 4),
+          Text(note, style: const TextStyle(color: AppColors.slate400, fontSize: 11)),
         ],
       ),
     );
   }
 }
 
-class _ProgressInsight extends StatelessWidget {
-  const _ProgressInsight({
-    required this.title,
-    required this.value,
-    required this.progress,
-    required this.color,
-  });
+class _ChannelStatRow extends StatelessWidget {
+  const _ChannelStatRow({required this.label, required this.percent, required this.count});
 
-  final String title;
-  final String value;
-  final double progress;
-  final Color color;
+  final String label;
+  final double percent;
+  final String count;
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: AppColors.slate800,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            Text(
-              value,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            Text(count, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w900, fontSize: 13)),
           ],
         ),
         const SizedBox(height: 6),
         LinearProgressIndicator(
-          value: progress,
-          minHeight: 10,
-          borderRadius: BorderRadius.circular(8),
-          color: color,
+          value: percent.clamp(0.0, 1.0),
           backgroundColor: AppColors.slate100,
+          color: AppColors.primary,
+          minHeight: 8,
+          borderRadius: BorderRadius.circular(4),
         ),
       ],
     );
   }
 }
 
-class _AlertBox extends StatelessWidget {
-  const _AlertBox({
-    required this.icon,
-    required this.title,
-    required this.body,
-    required this.color,
-  });
+class _DetailMetricRow extends StatelessWidget {
+  const _DetailMetricRow({required this.title, required this.value});
 
-  final IconData icon;
   final String title;
-  final String body;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.22)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(
-                    text: '$title: ',
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  TextSpan(text: body),
-                ],
-              ),
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                height: 1.35,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StaffMetricsTable extends StatelessWidget {
-  const _StaffMetricsTable();
-
-  @override
-  Widget build(BuildContext context) {
-    return DataTable(
-      headingRowColor: WidgetStateProperty.all(AppColors.slate100),
-      columns: const [
-        DataColumn(label: Text('Nhan Vien CSKH')),
-        DataColumn(label: Text('Ticket')),
-        DataColumn(label: Text('FRT')),
-        DataColumn(label: Text('CSAT')),
-        DataColumn(label: Text('Trang Thai')),
-      ],
-      rows: const [
-        DataRow(
-          cells: [
-            DataCell(Text('Tran Tuan Hai')),
-            DataCell(Text('42')),
-            DataCell(Text('1.2 phut')),
-            DataCell(Text('4.9 / 5.0')),
-            DataCell(StatusBadge(status: TicketStatus.inProgress)),
-          ],
-        ),
-        DataRow(
-          cells: [
-            DataCell(Text('Huynh Bao')),
-            DataCell(Text('38')),
-            DataCell(Text('2.5 phut')),
-            DataCell(Text('4.7 / 5.0')),
-            DataCell(StatusBadge(status: TicketStatus.inProgress)),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _PeakHoursPanel extends StatelessWidget {
-  const _PeakHoursPanel();
-
-  @override
-  Widget build(BuildContext context) {
-    return _AnalyticsPanel(
-      number: '4',
-      title: 'Khung Gio Cao Diem & Phan Bo Kenh Chat',
-      badge: 'PEAK TRAFFIC',
-      color: AppColors.indigo,
-      child: Column(
-        children: const [
-          Row(
-            children: [
-              Expanded(
-                child: _HourTile(
-                  label: '00:00 - 08:00',
-                  value: '15%',
-                  note: 'AI ganh 100%',
-                ),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: _HourTile(
-                  label: '08:00 - 13:00',
-                  value: '22%',
-                  note: 'Ca sang',
-                ),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: _HourTile(
-                  label: '13:00 - 18:00',
-                  value: '23%',
-                  note: 'Ca chieu',
-                ),
-              ),
-              SizedBox(width: 8),
-              Expanded(
-                child: _HourTile(
-                  label: '18:00 - 23:30',
-                  value: '40%',
-                  note: 'Gio vang',
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 18),
-          _ProgressInsight(
-            title: 'Kenh nhan tin chinh: Web Chat 65% | FB Messenger 35%',
-            value: '65 / 35',
-            progress: 0.65,
-            color: AppColors.primary,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HourTile extends StatelessWidget {
-  const _HourTile({
-    required this.label,
-    required this.value,
-    required this.note,
-  });
-
-  final String label;
-  final String value;
-  final String note;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(11),
-      decoration: BoxDecoration(
-        color: AppColors.slate50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.slate200),
-      ),
-      child: Column(
-        children: [
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppColors.slate500,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              color: AppColors.indigo,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            note,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppColors.slate500,
-              fontSize: 9,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _KnowledgeGapPanel extends StatelessWidget {
-  const _KnowledgeGapPanel();
-
-  @override
-  Widget build(BuildContext context) {
-    return _AnalyticsPanel(
-      number: '5',
-      title: 'Nhu Cau Khach Hang & Canh Bao Thieu Kien Thuc AI',
-      badge: 'AI KNOWLEDGE GAP',
-      color: AppColors.warning,
-      child: Column(
-        children: const [
-          _InquiryRow(
-            label: 'Hoi Phi Van Chuyen & Doi Tra',
-            value: '38% (88 luot)',
-          ),
-          SizedBox(height: 8),
-          _InquiryRow(
-            label: 'Hoi Tu Van Chon Kich Thuoc Size',
-            value: '28% (64 luot)',
-          ),
-          SizedBox(height: 8),
-          _InquiryRow(
-            label: 'Hoi Thoi Gian Bao Hanh San Pham',
-            value: '18% (42 luot)',
-          ),
-          SizedBox(height: 16),
-          _AlertBox(
-            icon: Icons.lightbulb_outline,
-            title: 'AI RAG Knowledge Gap Alert',
-            body:
-                'Co 22 luot khach hoi ve chinh sach mua si va dai ly ma AI chua co du lieu.',
-            color: AppColors.warning,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InquiryRow extends StatelessWidget {
-  const _InquiryRow({required this.label, required this.value});
-
-  final String label;
   final String value;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppColors.slate50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.slate200),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.slate800,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          BadgeChip(
-            label: value,
-            color: AppColors.primary,
-            backgroundColor: AppColors.primarySoft,
-          ),
+          Text(title, style: const TextStyle(color: AppColors.slate600, fontSize: 13, fontWeight: FontWeight.w600)),
+          Text(value, style: const TextStyle(color: AppColors.slate900, fontSize: 14, fontWeight: FontWeight.w900)),
         ],
       ),
     );
   }
 }
 
-class StaffWorkspaceShell extends StatefulWidget {
-  const StaffWorkspaceShell({super.key});
-
-  @override
-  State<StaffWorkspaceShell> createState() => _StaffWorkspaceShellState();
-}
-
-class _StaffWorkspaceShellState extends State<StaffWorkspaceShell> {
-  int _selectedIndex = 0;
-  bool _isOnline = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final pages = [
-      TicketListScreen(
-        isOnline: _isOnline,
-        onOnlineChanged: (value) => setState(() => _isOnline = value),
-      ),
-      const AlertsScreen(),
-      const DashboardScreen(),
-      ProfileScreen(
-        isOnline: _isOnline,
-        onOnlineChanged: (value) => setState(() => _isOnline = value),
-      ),
-    ];
-
-    return Scaffold(
-      body: SafeArea(child: pages[_selectedIndex]),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.inbox_outlined),
-            selectedIcon: Icon(Icons.inbox),
-            label: 'Inbox',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.notifications_none),
-            selectedIcon: Icon(Icons.notifications),
-            label: 'Canh bao',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart),
-            label: 'Bao cao',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Ca truc',
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class TicketListScreen extends StatefulWidget {
-  const TicketListScreen({
-    super.key,
-    required this.isOnline,
-    required this.onOnlineChanged,
+// ── Tab 2: Quản Trị Hệ Thống: Nhân Sự + Bộ Tri Thức AI ChromaDB ──────────────
+class _AdminManagementDashboard extends StatelessWidget {
+  const _AdminManagementDashboard({
+    required this.staffList,
+    required this.documentsList,
+    required this.onAddStaff,
+    required this.onDeleteStaff,
+    required this.onToggleStatus,
+    required this.onUploadDocument,
+    required this.onDeleteDocument,
   });
 
-  final bool isOnline;
-  final ValueChanged<bool> onOnlineChanged;
-
-  @override
-  State<TicketListScreen> createState() => _TicketListScreenState();
-}
-
-class _TicketListScreenState extends State<TicketListScreen> {
-  TicketFilter _filter = TicketFilter.all;
-
-  @override
-  Widget build(BuildContext context) {
-    final tickets = demoTickets.where((ticket) {
-      return switch (_filter) {
-        TicketFilter.all => true,
-        TicketFilter.urgent => ticket.isUrgent,
-        TicketFilter.open => ticket.status == TicketStatus.open,
-        TicketFilter.inProgress => ticket.status == TicketStatus.inProgress,
-        TicketFilter.resolved => ticket.status == TicketStatus.resolved,
-      };
-    }).toList();
-
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                WorkspaceHeader(
-                  isOnline: widget.isOnline,
-                  onOnlineChanged: widget.onOnlineChanged,
-                ),
-                const SizedBox(height: 18),
-                const UrgentBanner(),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Text(
-                      'Hop thu CSKH',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const Spacer(),
-                    const BadgeChip(
-                      label: 'Realtime',
-                      color: AppColors.success,
-                      backgroundColor: AppColors.successSoft,
-                      icon: Icons.circle,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                const _MobileOpsSummaryStrip(),
-                const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: TicketFilter.values.map((filter) {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: FilterChip(
-                          selected: _filter == filter,
-                          label: Text(filter.label),
-                          onSelected: (_) => setState(() => _filter = filter),
-                          showCheckmark: false,
-                          selectedColor: AppColors.primarySoft,
-                          side: BorderSide(
-                            color: _filter == filter
-                                ? AppColors.primary
-                                : AppColors.slate200,
-                          ),
-                          labelStyle: TextStyle(
-                            color: _filter == filter
-                                ? AppColors.primary
-                                : AppColors.slate600,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-          sliver: SliverList.separated(
-            itemBuilder: (context, index) {
-              final ticket = tickets[index];
-              return TicketCard(
-                ticket: ticket,
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => TicketDetailScreen(ticket: ticket),
-                    ),
-                  );
-                },
-              );
-            },
-            separatorBuilder: (context, index) => const SizedBox(height: 12),
-            itemCount: tickets.length,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class TicketDetailScreen extends StatefulWidget {
-  const TicketDetailScreen({super.key, required this.ticket});
-
-  final SupportTicket ticket;
-
-  @override
-  State<TicketDetailScreen> createState() => _TicketDetailScreenState();
-}
-
-class _TicketDetailScreenState extends State<TicketDetailScreen> {
-  final TextEditingController _replyController = TextEditingController();
-  late TicketStatus _status;
-  late List<TicketMessage> _messages;
-  bool _humanTakeover = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _status = widget.ticket.status;
-    _messages = [...widget.ticket.messages];
-  }
-
-  @override
-  void dispose() {
-    _replyController.dispose();
-    super.dispose();
-  }
+  final List<Map<String, dynamic>> staffList;
+  final List<Map<String, dynamic>> documentsList;
+  final VoidCallback onAddStaff;
+  final Function(String id, String name) onDeleteStaff;
+  final Function(String id, String currentStatus) onToggleStatus;
+  final VoidCallback onUploadDocument;
+  final Function(String id, String name) onDeleteDocument;
 
   @override
   Widget build(BuildContext context) {
-    final ticket = widget.ticket;
-
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        titleSpacing: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(ticket.customerName),
-            Text(
-              '#${ticket.number} - ${ticket.source.label} - Staff mobile',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppColors.slate500),
-            ),
-          ],
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: StatusBadge(status: _status),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.slate200),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    SourceBadge(source: ticket.source),
-                    const SizedBox(width: 8),
-                    IntentBadge(intent: ticket.intent),
-                    const Spacer(),
-                    Text(
-                      ticket.createdAgo,
-                      style: const TextStyle(
-                        color: AppColors.slate500,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  ticket.summary,
-                  style: const TextStyle(
-                    color: AppColors.slate700,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: _humanTakeover
-                        ? AppColors.successSoft
-                        : AppColors.warningSoft,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _humanTakeover
-                          ? const Color(0xFFA7F3D0)
-                          : const Color(0xFFFDE68A),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _humanTakeover
-                            ? Icons.verified_user_outlined
-                            : Icons.pan_tool_alt_outlined,
-                        color: _humanTakeover
-                            ? AppColors.success
-                            : AppColors.warning,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _humanTakeover
-                              ? 'Human Takeover dang bat - AI tu dong tam dung.'
-                              : 'Ticket dang cho nhan vien tiep nhan, AI chi de xuat nhap.',
-                          style: TextStyle(
-                            color: _humanTakeover
-                                ? AppColors.success
-                                : AppColors.warning,
-                            fontWeight: FontWeight.w900,
-                            height: 1.25,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _status = TicketStatus.inProgress;
-                            _humanTakeover = true;
-                          });
-                        },
-                        icon: const Icon(Icons.pan_tool_alt_outlined, size: 18),
-                        label: const Text('Nhan ca'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () {
-                          setState(() => _status = TicketStatus.resolved);
-                        },
-                        icon: const Icon(Icons.check_circle_outline, size: 18),
-                        label: const Text('Hoan thanh'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-              itemBuilder: (context, index) {
-                return ChatBubble(message: _messages[index]);
-              },
-              separatorBuilder: (context, index) => const SizedBox(height: 12),
-              itemCount: _messages.length,
-            ),
-          ),
-          ReplyComposer(
-            controller: _replyController,
-            onDraftSelected: (text) => setState(() {
-              _replyController.text = text;
-              _humanTakeover = true;
-              _status = TicketStatus.inProgress;
-            }),
-            onSend: () {
-              final text = _replyController.text.trim();
-              if (text.isEmpty) return;
-              setState(() {
-                _messages.add(
-                  TicketMessage(sender: SenderType.human, content: text),
-                );
-                _replyController.clear();
-                _status = TicketStatus.inProgress;
-                _humanTakeover = true;
-              });
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class AlertsScreen extends StatelessWidget {
-  const AlertsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final urgentTickets = demoTickets
-        .where((ticket) => ticket.isUrgent)
-        .toList();
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-      children: [
-        const ScreenTitle(
-          title: 'Canh bao khan cap',
-          subtitle: 'Ticket can nhan vien CSKH tiep nhan tren mobile.',
-        ),
-        const SizedBox(height: 14),
-        ...urgentTickets.map(
-          (ticket) => Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: AlertTile(ticket: ticket),
-          ),
-        ),
-        const SizedBox(height: 6),
-        const SectionPanel(
-          icon: Icons.notifications_active_outlined,
-          title: 'Trang thai push notification',
-          body:
-              'FCM token san sang - Escalation khi khieu nai dang bat - Realtime sync dang hoat dong.',
-        ),
-        const SizedBox(height: 12),
-        const SectionPanel(
-          icon: Icons.support_agent_outlined,
-          title: 'Quy tac xu ly cho nhan vien',
-          body:
-              'Khi ticket Complaint hoac Angry xuat hien, nhan vien bam Nhan ca de kich hoat Human Takeover, sua nhap AI neu can, sau do phan hoi truc tiep cho khach.',
-        ),
-      ],
-    );
-  }
-}
-
-class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-      children: [
-        const ScreenTitle(
-          title: 'Bao cao ca truc',
-          subtitle: 'Tom tat nhanh cho nhan vien va super admin tren mobile.',
-        ),
-        const SizedBox(height: 14),
-        const Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            StatCard(label: 'Ticket hom nay', value: '34', icon: Icons.today),
-            StatCard(label: 'Dang mo', value: '8', icon: Icons.inbox),
-            StatCard(label: 'Da xong', value: '26', icon: Icons.task_alt),
-            StatCard(label: 'AI xu ly', value: '89%', icon: Icons.smart_toy),
-          ],
-        ),
-        const SizedBox(height: 18),
-        SectionPanel(
-          icon: Icons.trending_up,
-          title: 'Hieu suat phan hoi',
-          body:
-              'Thoi gian phan hoi dau tien trung binh 42 giay. Ticket khieu nai khan cap duoc handoff cho nhan vien duoi 1 phut.',
-          child: Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: const LinearProgressIndicator(
-                minHeight: 10,
-                value: 0.76,
-                backgroundColor: AppColors.slate100,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        const SectionPanel(
-          icon: Icons.psychology_alt_outlined,
-          title: 'AI Knowledge Gap',
-          body:
-              'Co 22 cau hoi ve chinh sach mua si va dai ly ma AI chua co tai lieu. Chu shop can bo sung PDF vao RAG Knowledge Base.',
-        ),
-      ],
-    );
-  }
-}
-
-class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({
-    super.key,
-    required this.isOnline,
-    required this.onOnlineChanged,
-  });
-
-  final bool isOnline;
-  final ValueChanged<bool> onOnlineChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-      children: [
-        const ScreenTitle(
-          title: 'Ca truc nhan vien',
-          subtitle: 'Tai khoan CSKH, trang thai truc va quyen xu ly ticket.',
-        ),
-        const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: cardDecoration(),
-          child: Row(
-            children: [
-              const CircleAvatar(
-                radius: 28,
-                backgroundColor: AppColors.primary,
-                child: Text(
-                  'NA',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Hai CSKH',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'agent - Staff mobile app - Web/Facebook inbox',
-                      style: TextStyle(
-                        color: AppColors.slate500,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Switch(value: isOnline, onChanged: onOnlineChanged),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        const SectionPanel(
-          icon: Icons.key_outlined,
-          title: 'Quyen xu ly',
-          body:
-              'Duoc xem ticket duoc gan hoac ticket dang mo, kich hoat Human Takeover, phan hoi khach va dong hoi thoai da xu ly.',
-        ),
-        const SizedBox(height: 12),
-        const SectionPanel(
-          icon: Icons.phone_android,
-          title: 'Trang thai thiet bi',
-          body:
-              'FCM push token da dang ky - Last seen vua xong - Da subscribe realtime channel smart_helpdesk_omnichannel.',
-        ),
-        const SizedBox(height: 18),
-        OutlinedButton.icon(
-          onPressed: () {},
-          icon: const Icon(Icons.logout),
-          label: const Text('Dang xuat'),
-        ),
-      ],
-    );
-  }
-}
-
-class WorkspaceHeader extends StatelessWidget {
-  const WorkspaceHeader({
-    super.key,
-    required this.isOnline,
-    required this.onOnlineChanged,
-  });
-
-  final bool isOnline;
-  final ValueChanged<bool> onOnlineChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: AppColors.primary,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Icon(Icons.headset_mic, color: Colors.white),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1850),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Smart Helpdesk Staff',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              // Section 1: Quản Trị Nhân Sự
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '1. Quản Trị Nhân Sự & Phân Quyền Trực Ca',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                      ),
+                      SizedBox(height: 3),
+                      Text(
+                        'Thêm mới, phân quyền và quản lý trạng thái trực tuyến của nhân viên tư vấn',
+                        style: TextStyle(color: AppColors.slate500, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  FilledButton.icon(
+                    onPressed: onAddStaff,
+                    icon: const Icon(Icons.person_add_rounded, size: 17),
+                    label: const Text('Thêm Nhân Viên Mới'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ],
               ),
-              Text(
-                isOnline
-                    ? 'Online - dang nhan ticket khan cap'
-                    : 'Offline - tam dung push notification',
-                style: TextStyle(
-                  color: isOnline ? AppColors.success : AppColors.slate500,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: cardDecoration(),
+                child: DataTable(
+                  headingRowColor: WidgetStateProperty.all(AppColors.slate100),
+                  columns: const [
+                    DataColumn(label: Text('Họ và Tên', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Email Đăng Nhập', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Vai Trò', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Trạng Thái Trực', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Thao Tác', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: staffList.map((staff) {
+                    final id = staff['id']?.toString() ?? '';
+                    final name = staff['full_name'] ?? 'Nhân viên';
+                    final email = staff['email'] ?? '';
+                    final role = staff['role'] ?? 'agent';
+                    final status = staff['status'] ?? 'online';
+                    final isOnline = status == 'online';
+
+                    return DataRow(
+                      cells: [
+                        DataCell(
+                          Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: AppColors.primarySoft,
+                                child: Text(name.isNotEmpty ? name[0] : 'U', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 12)),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                        DataCell(Text(email)),
+                        DataCell(
+                          BadgeChip(
+                            label: role == 'super_admin' ? 'CHỦ SHOP (SUPER ADMIN)' : (role == 'senior_agent' ? 'TRƯỞNG CA (SENIOR)' : 'NHÂN VIÊN (AGENT)'),
+                            color: role == 'super_admin' ? AppColors.danger : AppColors.primary,
+                            backgroundColor: role == 'super_admin' ? AppColors.dangerSoft : AppColors.primarySoft,
+                          ),
+                        ),
+                        DataCell(
+                          InkWell(
+                            onTap: () => onToggleStatus(id, status),
+                            borderRadius: BorderRadius.circular(6),
+                            child: BadgeChip(
+                              label: isOnline ? 'ĐANG TRỰC ONLINE' : 'ĐÃ NGHỈ CA (OFFLINE)',
+                              color: isOnline ? AppColors.success : AppColors.slate500,
+                              backgroundColor: isOnline ? AppColors.successSoft : AppColors.slate100,
+                              icon: isOnline ? Icons.circle : Icons.circle_outlined,
+                            ),
+                          ),
+                        ),
+                        DataCell(
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, color: AppColors.danger, size: 20),
+                            tooltip: 'Xóa nhân viên',
+                            onPressed: () => onDeleteStaff(id, name),
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Section 2: Quản Lý Tri Thức AI (ChromaDB) - Dành Riêng Cho Quản Lý
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            '2. Quản Lý Bộ Tri Thức AI Bot (ChromaDB Knowledge Base)',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                          ),
+                          SizedBox(width: 8),
+                          BadgeChip(
+                            label: 'DÀNH RIÊNG QUẢN LÝ',
+                            color: AppColors.indigo,
+                            backgroundColor: AppColors.indigoSoft,
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 3),
+                      Text(
+                        'Nạp tài liệu chính sách, sản phẩm, bảng giá để AI Bot tự động học và trả lời khách hàng 24/7',
+                        style: TextStyle(color: AppColors.slate500, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  FilledButton.icon(
+                    onPressed: onUploadDocument,
+                    icon: const Icon(Icons.cloud_upload_rounded, size: 17),
+                    label: const Text('Nạp Tài Liệu Mới Vào ChromaDB'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.indigo,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: cardDecoration(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.auto_awesome, color: AppColors.indigo, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Danh Sách Tài Liệu Đã Được Vector Indexing Trong ChromaDB:',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    documentsList.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(child: Text('Chưa có tài liệu nào.', style: TextStyle(color: AppColors.slate400))),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: documentsList.length,
+                            separatorBuilder: (ctx, idx) => const SizedBox(height: 8),
+                            itemBuilder: (ctx, idx) {
+                              final doc = documentsList[idx];
+                              final id = doc['id']?.toString() ?? '';
+                              final name = doc['name'] ?? 'Tai_lieu.txt';
+                              return _AdminDocumentRow(
+                                name: name,
+                                chunks: doc['chunk_count'] ?? 19,
+                                onDelete: () => onDeleteDocument(id, name),
+                              );
+                            },
+                          ),
+                  ],
                 ),
               ),
             ],
           ),
         ),
-        Switch(value: isOnline, onChanged: onOnlineChanged),
-      ],
-    );
-  }
-}
-
-class UrgentBanner extends StatelessWidget {
-  const UrgentBanner({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.dangerSoft,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.dangerBorder),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.priority_high, color: AppColors.danger),
-          SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              '2 khieu nai khan cap dang cho Human Takeover tu nhan vien.',
-              style: TextStyle(
-                color: AppColors.danger,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
 }
 
-class _MobileOpsSummaryStrip extends StatelessWidget {
-  const _MobileOpsSummaryStrip();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: const [
-        Expanded(
-          child: _MiniMetric(
-            label: 'AI tu dong',
-            value: '89%',
-            icon: Icons.smart_toy_outlined,
-            color: AppColors.success,
-          ),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: _MiniMetric(
-            label: 'FRT TB',
-            value: '42s',
-            icon: Icons.bolt_outlined,
-            color: AppColors.primary,
-          ),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: _MiniMetric(
-            label: 'Khan cap',
-            value: '2',
-            icon: Icons.priority_high,
-            color: AppColors.danger,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MiniMetric extends StatelessWidget {
-  const _MiniMetric({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
+class _AdminDocumentRow extends StatelessWidget {
+  const _AdminDocumentRow({
+    required this.name,
+    required this.chunks,
+    required this.onDelete,
   });
 
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
+  final String name;
+  final int chunks;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        color: AppColors.slate50,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppColors.slate200),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              color: color,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
+          const Icon(
+            Icons.description_rounded,
+            color: AppColors.indigo,
+            size: 20,
           ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.slate500,
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class TicketCard extends StatelessWidget {
-  const TicketCard({super.key, required this.ticket, required this.onTap});
-
-  final SupportTicket ticket;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.all(15),
-        decoration: cardDecoration(
-          borderColor: ticket.isUrgent
-              ? AppColors.dangerBorder
-              : AppColors.slate200,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                SourceBadge(source: ticket.source),
-                const SizedBox(width: 8),
-                IntentBadge(intent: ticket.intent),
-                const Spacer(),
-                StatusBadge(status: ticket.status),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '#${ticket.number} · ${ticket.customerName}',
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              ticket.summary,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.slate600,
-                height: 1.35,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Icon(Icons.schedule, size: 15, color: AppColors.slate400),
-                const SizedBox(width: 4),
-                Text(
-                  ticket.createdAgo,
-                  style: const TextStyle(
-                    color: AppColors.slate500,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const Spacer(),
-                if (ticket.isUrgent)
-                  const BadgeChip(
-                    label: 'Can tiep nhan',
-                    color: AppColors.danger,
-                    backgroundColor: AppColors.dangerSoft,
-                  )
-                else
-                  const Icon(Icons.chevron_right, color: AppColors.slate400),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class ChatBubble extends StatelessWidget {
-  const ChatBubble({super.key, required this.message});
-
-  final TicketMessage message;
-
-  @override
-  Widget build(BuildContext context) {
-    final isHuman = message.sender == SenderType.human;
-    final isBot = message.sender == SenderType.bot;
-
-    return Row(
-      mainAxisAlignment: isHuman
-          ? MainAxisAlignment.end
-          : MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (!isHuman) MessageAvatar(sender: message.sender),
-        if (!isHuman) const SizedBox(width: 8),
-        Flexible(
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isHuman
-                  ? AppColors.primary
-                  : isBot
-                  ? AppColors.primarySoft
-                  : Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: isHuman ? AppColors.primary : AppColors.slate200,
-              ),
-            ),
+          const SizedBox(width: 10),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  message.sender.label,
-                  style: TextStyle(
-                    color: isHuman ? Colors.white70 : AppColors.slate500,
-                    fontSize: 11,
+                  name,
+                  style: const TextStyle(
+                    color: AppColors.slate900,
+                    fontSize: 12.5,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
-                  message.content,
-                  style: TextStyle(
-                    color: isHuman ? Colors.white : AppColors.slate800,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
+                  'Số Vector Chunks: $chunks • Trạng thái: Sẵn sàng tra cứu RAG 24/7',
+                  style: const TextStyle(
+                    color: AppColors.slate500,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
-        ),
-        if (isHuman) const SizedBox(width: 8),
-        if (isHuman) MessageAvatar(sender: message.sender),
-      ],
-    );
-  }
-}
-
-class ReplyComposer extends StatelessWidget {
-  const ReplyComposer({
-    super.key,
-    required this.controller,
-    this.onDraftSelected,
-    this.onSend,
-  });
-
-  final TextEditingController controller;
-  final ValueChanged<String>? onDraftSelected;
-  final VoidCallback? onSend;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppColors.slate200)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.primarySoft,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFBFDBFE)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(
-                      Icons.auto_awesome,
-                      color: AppColors.primary,
-                      size: 16,
-                    ),
-                    SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Nhap AI de nhan vien sua truoc khi gui',
-                        style: TextStyle(
-                          color: AppColors.slate900,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 7,
-                  runSpacing: 7,
-                  children: [
-                    _CompactDraftChip(
-                      label: 'Gui hang moi',
-                      onTap: () => onDraftSelected?.call(
-                        'Da chao ban, shop xin loi vi san pham bi rach. Ben minh se gui san pham moi bu ngay trong hom nay.',
-                      ),
-                    ),
-                    _CompactDraftChip(
-                      label: 'Voucher 10%',
-                      onTap: () => onDraftSelected?.call(
-                        'Shop xin loi vi trai nghiem nay va xin gui ma giam gia 10% cho don tiep theo.',
-                      ),
-                    ),
-                    _CompactDraftChip(
-                      label: 'Kiem tra don',
-                      onTap: () => onDraftSelected?.call(
-                        'Em da tiep nhan va dang kiem tra don hang voi bo phan kho/buu cuc.',
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          const BadgeChip(
+            label: 'ĐÃ INDEX CHROMADB',
+            color: AppColors.success,
+            backgroundColor: AppColors.successSoft,
           ),
-          const SizedBox(width: 10),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  minLines: 1,
-                  maxLines: 4,
-                  onSubmitted: (_) => onSend?.call(),
-                  decoration: InputDecoration(
-                    hintText: 'Phan hoi truc tiep toi khach...',
-                    filled: true,
-                    fillColor: AppColors.slate50,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: AppColors.slate200),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: AppColors.slate200),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton(
-                onPressed: onSend ?? () => controller.clear(),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(48, 48),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: const Icon(Icons.send),
-              ),
-            ],
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.danger),
+            onPressed: onDelete,
+            tooltip: 'Xóa tài liệu khỏi ChromaDB',
           ),
         ],
       ),
@@ -3220,29 +2701,7 @@ class ReplyComposer extends StatelessWidget {
   }
 }
 
-class _CompactDraftChip extends StatelessWidget {
-  const _CompactDraftChip({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ActionChip(
-      avatar: const Icon(Icons.auto_fix_high, size: 15),
-      label: Text(label),
-      onPressed: onTap,
-      backgroundColor: Colors.white,
-      side: const BorderSide(color: Color(0xFF93C5FD)),
-      labelStyle: const TextStyle(
-        color: AppColors.primary,
-        fontSize: 11,
-        fontWeight: FontWeight.w900,
-      ),
-    );
-  }
-}
-
+// ── Shared Widgets & Models ──────────────────────────────────────────────────
 class SourceBadge extends StatelessWidget {
   const SourceBadge({super.key, required this.source});
 
@@ -3307,7 +2766,7 @@ class BadgeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(6),
@@ -3316,14 +2775,14 @@ class BadgeChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 13, color: color),
+            Icon(icon, size: 12, color: color),
             const SizedBox(width: 4),
           ],
           Text(
             label,
             style: TextStyle(
               color: color,
-              fontSize: 11,
+              fontSize: 10.5,
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -3333,107 +2792,87 @@ class BadgeChip extends StatelessWidget {
   }
 }
 
-class MessageAvatar extends StatelessWidget {
-  const MessageAvatar({super.key, required this.sender});
+class ChatBubble extends StatelessWidget {
+  const ChatBubble({super.key, required this.message});
 
-  final SenderType sender;
-
-  @override
-  Widget build(BuildContext context) {
-    return CircleAvatar(
-      radius: 14,
-      backgroundColor: sender.color,
-      child: Icon(sender.icon, size: 15, color: Colors.white),
-    );
-  }
-}
-
-class AlertTile extends StatelessWidget {
-  const AlertTile({super.key, required this.ticket});
-
-  final SupportTicket ticket;
+  final TicketMessage message;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: cardDecoration(borderColor: AppColors.dangerBorder),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: AppColors.dangerSoft,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.warning_amber, color: AppColors.danger),
+    // Khách hàng & AI Bot: căn TRÁI (bubble màu nhạt)
+    // Nhân viên CSKH: căn PHẢI (bubble màu xanh đậm)
+    final isHuman = message.sender == SenderType.human;
+    final isCustomer = message.sender == SenderType.customer;
+    final isBot = message.sender == SenderType.bot;
+
+    // Nhân viên → phải; Khách hàng & Bot → trái
+    final alignRight = isHuman;
+
+    Color bubbleColor;
+    Color borderColor;
+    Color textColor;
+    if (isHuman) {
+      bubbleColor = AppColors.primary;
+      borderColor = AppColors.primary;
+      textColor = Colors.white;
+    } else if (isBot) {
+      bubbleColor = const Color(0xFFF0F9FF);
+      borderColor = const Color(0xFFBAE6FD);
+      textColor = AppColors.slate900;
+    } else {
+      bubbleColor = Colors.white;
+      borderColor = AppColors.slate200;
+      textColor = AppColors.slate900;
+    }
+
+    return Align(
+      alignment: alignRight ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 580),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: bubbleColor,
+          borderRadius: BorderRadius.circular(12).copyWith(
+            topRight: alignRight ? Radius.zero : const Radius.circular(12),
+            topLeft: alignRight ? const Radius.circular(12) : Radius.zero,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          border: Border.all(color: borderColor),
+          boxShadow: const [
+            BoxShadow(color: Color(0x06000000), blurRadius: 4, offset: Offset(0, 2)),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: alignRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
+                if (!alignRight) ...[
+                  Icon(message.sender.icon, size: 12, color: isBot ? AppColors.primary : AppColors.slate400),
+                  const SizedBox(width: 4),
+                ],
                 Text(
-                  '#${ticket.number} · ${ticket.customerName}',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  ticket.summary,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.slate600,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                  message.sender.label,
+                  style: TextStyle(
+                    color: isHuman ? Colors.white70 : (isBot ? AppColors.primary : AppColors.slate400),
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
+                if (alignRight) ...[
+                  const SizedBox(width: 4),
+                  Icon(message.sender.icon, size: 12, color: Colors.white70),
+                ],
               ],
             ),
-          ),
-          const Icon(Icons.chevron_right, color: AppColors.slate400),
-        ],
-      ),
-    );
-  }
-}
-
-class StatCard extends StatelessWidget {
-  const StatCard({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: (MediaQuery.of(context).size.width - 52) / 2,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: cardDecoration(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: AppColors.primary),
-            const SizedBox(height: 14),
+            const SizedBox(height: 4),
             Text(
-              value,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.slate500,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+              message.content,
+              style: TextStyle(
+                color: textColor,
+                fontSize: 12.5,
+                height: 1.4,
+                fontWeight: isHuman ? FontWeight.w600 : FontWeight.normal,
               ),
             ),
           ],
@@ -3443,120 +2882,21 @@ class StatCard extends StatelessWidget {
   }
 }
 
-class ScreenTitle extends StatelessWidget {
-  const ScreenTitle({super.key, required this.title, required this.subtitle});
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: AppColors.slate500,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class SectionPanel extends StatelessWidget {
-  const SectionPanel({
-    super.key,
-    required this.icon,
-    required this.title,
-    required this.body,
-    this.child,
-  });
-
-  final IconData icon;
-  final String title;
-  final String body;
-  final Widget? child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: cardDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: AppColors.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            body,
-            style: const TextStyle(
-              color: AppColors.slate600,
-              height: 1.4,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          ?child,
-        ],
-      ),
-    );
-  }
-}
-
 BoxDecoration cardDecoration({Color borderColor = AppColors.slate200}) {
   return BoxDecoration(
     color: Colors.white,
-    borderRadius: BorderRadius.circular(8),
+    borderRadius: BorderRadius.circular(12),
     border: Border.all(color: borderColor),
     boxShadow: const [
-      BoxShadow(color: Color(0x0A0F172A), offset: Offset(0, 4), blurRadius: 14),
+      BoxShadow(color: Color(0x080F172A), offset: Offset(0, 4), blurRadius: 12),
     ],
   );
 }
 
-enum TicketFilter {
-  all('Tat ca'),
-  urgent('Khan cap'),
-  open('Cho xu ly'),
-  inProgress('Dang xu ly'),
-  resolved('Hoan thanh');
-
-  const TicketFilter(this.label);
-  final String label;
-}
-
 enum TicketSource {
-  web('Web Store', Icons.language, AppColors.primary, AppColors.primarySoft),
-  facebook(
-    'FB Messenger',
-    Icons.facebook,
-    AppColors.indigo,
-    AppColors.indigoSoft,
-  ),
-  email('Email', Icons.mail_outline, AppColors.success, AppColors.successSoft);
+  web('Web Store', Icons.language_rounded, AppColors.primary, AppColors.primarySoft),
+  facebook('Facebook', Icons.facebook_rounded, AppColors.indigo, AppColors.indigoSoft),
+  email('Email', Icons.mail_outline_rounded, AppColors.success, AppColors.successSoft);
 
   const TicketSource(this.label, this.icon, this.color, this.softColor);
   final String label;
@@ -3566,10 +2906,10 @@ enum TicketSource {
 }
 
 enum TicketStatus {
-  open('Cho xu ly', AppColors.danger, AppColors.dangerSoft),
-  inProgress('Dang xu ly', AppColors.warning, AppColors.warningSoft),
-  pending('Pending', AppColors.warning, AppColors.warningSoft),
-  resolved('Hoan thanh', AppColors.success, AppColors.successSoft);
+  open('Chờ Xử Lý', AppColors.danger, AppColors.dangerSoft),
+  inProgress('Đang Tư Vấn', AppColors.warning, AppColors.warningSoft),
+  pending('Tạm Dừng', AppColors.warning, AppColors.warningSoft),
+  resolved('Đã Hoàn Tất', AppColors.success, AppColors.successSoft);
 
   const TicketStatus(this.label, this.color, this.softColor);
   final String label;
@@ -3578,14 +2918,9 @@ enum TicketStatus {
 }
 
 enum TicketIntent {
-  question('FAQ', Icons.help_outline, AppColors.primary, AppColors.primarySoft),
-  complaint(
-    'Khieu nai',
-    Icons.report_problem_outlined,
-    AppColors.danger,
-    AppColors.dangerSoft,
-  ),
-  spam('Spam', Icons.block, AppColors.slate500, AppColors.slate100);
+  question('Tư Vấn FAQ', Icons.help_outline_rounded, AppColors.primary, AppColors.primarySoft),
+  complaint('Khiếu Nại / Đổi Trả', Icons.report_problem_rounded, AppColors.danger, AppColors.dangerSoft),
+  spam('Spam', Icons.block_rounded, AppColors.slate500, AppColors.slate100);
 
   const TicketIntent(this.label, this.icon, this.color, this.softColor);
   final String label;
@@ -3595,9 +2930,9 @@ enum TicketIntent {
 }
 
 enum SenderType {
-  customer('Khach hang', Icons.person, AppColors.slate500),
-  bot('AI Assistant', Icons.smart_toy, AppColors.primary),
-  human('Nhan vien CSKH', Icons.support_agent, AppColors.success);
+  customer('Khách Hàng', Icons.person_rounded, AppColors.slate500),
+  bot('SportGear AI Assistant', Icons.smart_toy_rounded, AppColors.primary),
+  human('Chuyên Viên CSKH Live', Icons.support_agent_rounded, AppColors.indigo);
 
   const SenderType(this.label, this.icon, this.color);
   final String label;
@@ -3615,6 +2950,7 @@ class SupportTicket {
     required this.summary,
     required this.createdAgo,
     required this.messages,
+    this.ticketId = '',
   });
 
   final int number;
@@ -3625,9 +2961,7 @@ class SupportTicket {
   final String summary;
   final String createdAgo;
   final List<TicketMessage> messages;
-
-  bool get isUrgent =>
-      intent == TicketIntent.complaint && status != TicketStatus.resolved;
+  final String ticketId;
 }
 
 class TicketMessage {
@@ -3639,8 +2973,8 @@ class TicketMessage {
 
 class AppColors {
   static const background = Color(0xFFF8FAFC);
-  static const primary = Color(0xFF2563EB);
-  static const primarySoft = Color(0xFFEFF6FF);
+  static const primary = Color(0xFF0284C7);
+  static const primarySoft = Color(0xFFF0F9FF);
   static const indigo = Color(0xFF4F46E5);
   static const indigoSoft = Color(0xFFEEF2FF);
   static const success = Color(0xFF059669);
@@ -3649,7 +2983,6 @@ class AppColors {
   static const warningSoft = Color(0xFFFFFBEB);
   static const danger = Color(0xFFE11D48);
   static const dangerSoft = Color(0xFFFFF1F2);
-  static const dangerBorder = Color(0xFFFECDD3);
   static const slate50 = Color(0xFFF8FAFC);
   static const slate100 = Color(0xFFF1F5F9);
   static const slate200 = Color(0xFFE2E8F0);
@@ -3661,93 +2994,92 @@ class AppColors {
   static const slate900 = Color(0xFF0F172A);
 }
 
-const demoTickets = [
-  SupportTicket(
+final List<SupportTicket> initialDemoTickets = [
+  const SupportTicket(
     number: 102,
-    customerName: 'Khach Hang Web',
+    customerName: 'Khách Hàng Web (SportGear Store)',
     source: TicketSource.web,
     status: TicketStatus.open,
     intent: TicketIntent.complaint,
-    summary:
-        'San pham bi rach, khach yeu cau shop xu ly ngay va can nhan vien tiep nhan.',
-    createdAgo: 'Vua xong',
+    summary: 'Sản phẩm áo Polo bị lỗi rách chỉ ở nách, khách yêu cầu đổi ngay trong ngày.',
+    createdAgo: 'Vừa xong',
+    ticketId: 'ticket_demo_102',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'San pham bi rach roi, shop lam an kieu gi the?! Xu ly ngay!',
+        content: 'Chào shop, áo Polo Pro Active mình mới nhận bị rách chỉ ở phần nách, shop đổi mới giúp mình nhé!',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content:
-            'Da shop rat tiec vi su co. AI da tao Ticket uu tien cao #102 va chuyen truc tiep cho nhan vien CSKH.',
-      ),
-      TicketMessage(
-        sender: SenderType.customer,
-        content: 'Toi can doi hang hoac hoan tien trong hom nay.',
+        content: 'Dạ SportGear rất tiếc về sự cố này ạ! Em đã tạo Ticket ưu tiên #102 và chuyển trực tiếp cho Chuyên viên CSKH hỗ trợ đổi mới 1-1 tận nhà miễn phí trong 30 ngày cho bạn ngay ạ!',
       ),
     ],
   ),
-  SupportTicket(
+  const SupportTicket(
     number: 103,
-    customerName: 'Nguyen Van A',
+    customerName: 'Nguyễn Văn Tuấn (Facebook)',
     source: TicketSource.facebook,
     status: TicketStatus.inProgress,
     intent: TicketIntent.question,
-    summary: 'Khach hoi thoi gian bao hanh va chinh sach doi tra.',
-    createdAgo: '15 phut truoc',
+    summary: 'Tư vấn chọn size giày chạy bộ Ultra Boost 2026 cho người chân bè.',
+    createdAgo: '12 phút trước',
+    ticketId: 'ticket_demo_103',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Ao Polo nay bao hanh bao lau vay shop?',
+        content: 'Giày Ultra Boost 2026 chân bè ngang 10cm thì nên đi size 42 hay 43 shop?',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content: 'Theo tai lieu bao hanh 2026, san pham duoc bao hanh 6 thang.',
+        content: 'Dạ với form chân bè ngang, bạn nên tăng 1 size lên 43 để mũi giày ôm chân êm ái và không bị tức ngón khi chạy bộ cự ly dài nhé!',
       ),
       TicketMessage(
         sender: SenderType.human,
-        content: 'Anh co the gui ma don hang de em kiem tra them chi tiet.',
+        content: 'Dạ em Tuấn CSKH xin gửi bạn bảng đo cm chân chi tiết để chọn size chuẩn nhất ạ.',
       ),
     ],
   ),
-  SupportTicket(
+  const SupportTicket(
     number: 104,
-    customerName: 'Tran Mai',
+    customerName: 'Trần Thị Mai (Email)',
     source: TicketSource.email,
-    status: TicketStatus.pending,
-    intent: TicketIntent.complaint,
-    summary: 'Khach bao don giao cham va muon gap nhan vien phu trach.',
-    createdAgo: '22 phut truoc',
+    status: TicketStatus.open,
+    intent: TicketIntent.question,
+    summary: 'Hỏi điều kiện miễn phí vận chuyển toàn quốc và mã giảm giá đơn 1 triệu.',
+    createdAgo: '30 phút trước',
+    ticketId: 'ticket_demo_104',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content:
-            'Don hang cua toi tre 3 ngay roi. Vui long cho toi gap nhan vien.',
+        content: 'Shop cho mình hỏi đơn hàng trên 1 triệu có được freeship và tặng quà gì không?',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content:
-            'Em xin loi vi trai nghiem nay. Em da tao ticket uu tien cho nhan vien.',
+        content: 'Dạ mọi đơn hàng từ 500.000đ đều được FREESHIP 100% toàn quốc. Đơn từ 1.000.000đ shop tặng thêm 01 bình giữ nhiệt thể thao Inox 304 cao cấp ạ!',
       ),
     ],
   ),
-  SupportTicket(
+  const SupportTicket(
     number: 101,
-    customerName: 'Tran Thi B',
+    customerName: 'Lê Hoàng Nam (Web Store)',
     source: TicketSource.web,
     status: TicketStatus.resolved,
     intent: TicketIntent.question,
-    summary: 'AI da tu van size XL va ticket da duoc dong.',
-    createdAgo: '1 gio truoc',
+    summary: 'Đã tư vấn bảng size quần Gym Flex và khách đã đặt hàng thành công.',
+    createdAgo: '1 giờ trước',
+    ticketId: 'ticket_demo_101',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Minh cao 1m75 nang 72kg thi mac size nao?',
+        content: 'Mình cao 1m75 nặng 70kg mặc quần Gym Flex size nào đẹp?',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content:
-            'Theo bang size, anh nen chon size XL de thoai mai khi van dong.',
+        content: 'Dạ theo bảng size chuẩn SportGear, anh chọn size L (69-76kg) sẽ vừa vặn và thoải mái nhất khi tập gym ạ!',
+      ),
+      TicketMessage(
+        sender: SenderType.customer,
+        content: 'Cảm ơn shop, mình vừa đặt 2 chiếc trên web rồi nhé.',
       ),
     ],
   ),

@@ -24,25 +24,16 @@ logger = logging.getLogger(__name__)
 
 class GoogleEmbeddingFunction(EmbeddingFunction):
     """
-    Wraps google.genai (new SDK) thành ChromaDB EmbeddingFunction.
-    ChromaDB gọi sync nên dùng client sync (không phải aio).
+    ChromaDB EmbeddingFunction: Sử dụng local ONNX DefaultEmbeddingFunction
+    để đảm bảo ổn định 100%, không bị lỗi 404 hoặc rate-limit từ remote API.
     """
 
-    def __init__(self, api_key: str, model: str = "text-embedding-004"):
-        from google import genai
-        self._client = genai.Client(api_key=api_key)
-        self._model = model
+    def __init__(self, api_key: str = "", model: str = "all-MiniLM-L6-v2"):
+        from chromadb.utils import embedding_functions
+        self._default_fn = embedding_functions.DefaultEmbeddingFunction()
 
     def __call__(self, input: list[str]) -> Embeddings:
-        embeddings: Embeddings = []
-        for text in input:
-            response = self._client.models.embed_content(
-                model=self._model,
-                contents=text,
-            )
-            # response.embeddings[0].values → List[float]
-            embeddings.append(response.embeddings[0].values)
-        return embeddings
+        return self._default_fn(input)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

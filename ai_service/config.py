@@ -12,7 +12,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
+
+    backend_url: str = "http://backend:8000"
 
     # ── Google AI ──────────────────────────────────────────────────
     google_api_key: str = ""
@@ -20,7 +23,7 @@ class Settings(BaseSettings):
     # Model names — dùng Flash cho classification (rẻ/nhanh),
     # Pro cho RAG generation (cần reasoning tốt hơn)
     intent_model: str = "gemini-3.6-flash"      # Fast + cheap cho classification
-    rag_model: str = "gemini-3.6-flash"          # Better reasoning cho RAG
+    rag_model: str = "gemini-3.6-flash"          # LLM reasoning cho RAG
     embedding_model: str = "text-embedding-004"  # 768-dim, multilingual
 
     # ── Supabase ───────────────────────────────────────────────────
@@ -43,7 +46,7 @@ class Settings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 64
     retrieval_top_k: int = 5
-    similarity_threshold: float = 0.60  # Dưới ngưỡng → low confidence → handoff
+    similarity_threshold: float = 0.35  # Phù hợp với tiếng Việt và local ONNX embeddings
 
     # ── Intent Classification ──────────────────────────────────────
     intent_confidence_threshold: float = 0.60  # FAQ dưới mức này → handoff

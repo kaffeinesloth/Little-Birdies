@@ -5,15 +5,18 @@ from uuid import UUID
 from core.auth import get_current_user
 from core.database import get_supabase_client, get_supabase_admin
 from core.services import dispatch_channel_reply
+from pydantic import BaseModel
 from models.domain import (
     APIResponse, MetaResponse,
     MessageCreate, IncomingMessage,
     SenderType,
 )
 
+import os
+
 router = APIRouter()
 
-AI_SERVICE_URL = "http://localhost:8001"  # URL của ai_service
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")  # URL của ai_service
 
 
 @router.post("/incoming", response_model=APIResponse, status_code=202)
@@ -42,15 +45,24 @@ async def incoming_message(payload: IncomingMessage):
 
     if existing.data:
         ticket_id = existing.data[0]["id"]
+        # Cập nhật summary tin nhắn mới nhất
+        try:
+            supabase_admin.table("tickets").update({
+                "summary": payload.content[:120],
+                "updated_at": "now()",
+            }).eq("id", ticket_id).execute()
+        except Exception:
+            pass
     else:
         # Tạo ticket mới — intent sẽ được AI cập nhật sau
         new_ticket = (
             supabase_admin.table("tickets")
             .insert({
                 "customer_id": payload.customer_id,
-                "customer_name": payload.customer_name,
+                "customer_name": payload.customer_name or "Khách Hàng SportGear",
                 "source": payload.source.value,
                 "status": "open",
+                "summary": payload.content[:120],
             })
             .execute()
         )
@@ -64,10 +76,10 @@ async def incoming_message(payload: IncomingMessage):
         "content": payload.content,
     }).execute()
 
-    # 3. Gọi AI service (fire-and-forget style, không await kết quả)
+    # 3. Gọi AI service
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            await client.post(
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            ai_res = await client.post(
                 f"{AI_SERVICE_URL}/process",
                 json={
                     "ticket_id": ticket_id,
@@ -76,7 +88,37 @@ async def incoming_message(payload: IncomingMessage):
                     "content": payload.content,
                 },
             )
-    except Exception:
+            if ai_res.status_code == 200:
+                ai_data = ai_res.json()
+                action = ai_data.get("action", "NONE")
+                bot_reply_text = ai_data.get("reply")
+
+                # Lưu ngay phản hồi của Bot nếu có
+                if bot_reply_text:
+                    # Kiểm tra xem tin nhắn bot đã được callback lưu chưa
+                    existing_bot_msg = (
+                        supabase_admin.table("messages")
+                        .select("id")
+                        .eq("ticket_id", ticket_id)
+                        .eq("sender_type", SenderType.bot.value)
+                        .order("created_at", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    if not existing_bot_msg.data:
+                        supabase_admin.table("messages").insert({
+                            "ticket_id": ticket_id,
+                            "sender_type": SenderType.bot.value,
+                            "sender_id": "ai-bot",
+                            "content": bot_reply_text,
+                        }).execute()
+
+                # Nếu AI handoff → đánh dấu ticket
+                if action == "HANDOFF":
+                    supabase_admin.table("tickets").update({
+                        "intent": "complaint",
+                    }).eq("id", ticket_id).execute()
+    except Exception as e:
         # AI service không phản hồi — ticket vẫn tồn tại, agent xử lý thủ công
         pass
 
@@ -150,3 +192,96 @@ async def send_message(
         meta=MetaResponse(code=201, message="Tin nhắn đã được gửi."),
         data=msg_result.data[0] if msg_result.data else None,
     )
+
+
+class AgentReplyDemoPayload(BaseModel):
+    ticket_id: str
+    content: str
+
+@router.post("/agent-reply-demo", response_model=APIResponse, status_code=201)
+async def send_message_demo(
+    payload: AgentReplyDemoPayload,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Demo endpoint cho Flutter Web Admin (bỏ qua auth JWT)
+    """
+    supabase = get_supabase_admin()
+    t_id = str(payload.ticket_id).strip()
+    
+    ticket_result = (
+        supabase.table("tickets")
+        .select("id, source, status, customer_id, summary")
+        .eq("id", t_id)
+        .single()
+        .execute()
+    )
+
+    if not ticket_result.data:
+        raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+
+    ticket = ticket_result.data
+
+    if ticket["status"] == "resolved":
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể reply ticket đã đóng. Reopen ticket trước.",
+        )
+
+    admin_id = "agent_demo"
+    msg_result = (
+        supabase.table("messages")
+        .insert({
+            "ticket_id": str(payload.ticket_id),
+            "sender_type": SenderType.human.value,
+            "sender_id": admin_id,
+            "content": payload.content,
+        })
+        .execute()
+    )
+
+    if ticket["status"] == "open":
+        supabase.table("tickets").update({
+            "status": "in_progress",
+        }).eq("id", str(payload.ticket_id)).execute()
+
+    background_tasks.add_task(
+        dispatch_channel_reply,
+        source=ticket["source"],
+        customer_id=ticket["customer_id"],
+        content=payload.content,
+        ticket_summary=ticket.get("summary"),
+    )
+
+    return APIResponse(
+        meta=MetaResponse(code=201, message="Tin nhắn đã được gửi (Demo)."),
+        data=msg_result.data[0] if msg_result.data else None,
+    )
+
+
+
+from pydantic import BaseModel
+class BotReplyCreate(BaseModel):
+    ticket_id: UUID
+    content: str
+
+@router.post("/bot-reply", include_in_schema=False)
+async def bot_reply(payload: BotReplyCreate):
+    """
+    Endpoint nội bộ: AI service gọi sau khi generate reply xong.
+    Lưu message vào DB và Supabase Realtime sẽ broadcast.
+    """
+    supabase_admin = get_supabase_admin()
+    
+    msg_result = (
+        supabase_admin.table("messages")
+        .insert({
+            "ticket_id": str(payload.ticket_id),
+            "sender_type": SenderType.bot.value,
+            "sender_id": "ai-bot",
+            "content": payload.content,
+        })
+        .execute()
+    )
+    
+    return {"status": "saved"}

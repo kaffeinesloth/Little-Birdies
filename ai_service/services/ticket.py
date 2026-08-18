@@ -24,18 +24,18 @@ class TicketService:
         customer_message: str,
         context_summary: str = "",
     ) -> dict:
+        norm_intent = "complaint" if str(intent).upper() in ["COMPLAINT", "ANGRY", "ESCALATION_REQ"] else "question"
+        norm_source = channel if channel in ["web", "facebook", "email"] else "web"
         ticket = await q.create_ticket(self._db, {
-            "tenant_id":        tenant_id,
-            "conversation_id":  conversation_id,
-            "channel":          channel,
-            "intent":           intent,
-            "urgency":          urgency,
-            "customer_message": customer_message[:1000],
-            "context_summary":  context_summary[:2000],
+            "customer_id":      conversation_id,
+            "customer_name":    "Khách Hàng",
+            "source":           norm_source,
+            "intent":           norm_intent,
+            "summary":          context_summary[:500] if context_summary else customer_message[:500],
         })
         logger.info(
             "Ticket created: id=%s urgency=%d intent=%s",
-            ticket["id"], urgency, intent,
+            ticket.get("id"), urgency, intent,
         )
         return ticket
 

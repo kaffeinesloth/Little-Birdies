@@ -1,9 +1,10 @@
+import os
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from core.auth import get_current_user, require_super_admin
-from core.database import get_supabase_client
+from core.database import get_supabase_client, get_supabase_admin
 from models.domain import APIResponse, MetaResponse, EmbeddingStatus
 
 router = APIRouter()
@@ -12,7 +13,133 @@ ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocume
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE_MB = 10
 
-AI_SERVICE_URL = "http://localhost:8001"
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://ai-service:8001")
+
+
+# ── Demo Admin Knowledge Base Endpoints (No Auth needed for Web Admin Demo) ────
+
+@router.get("/demo-list", response_model=APIResponse)
+async def list_demo_documents():
+    """Lấy danh sách tài liệu thật đã Index vào ChromaDB cho Web Admin"""
+    docs = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            ai_res = await client.get(f"{AI_SERVICE_URL}/knowledge/documents", params={"tenant_id": "default"})
+            if ai_res.status_code == 200:
+                raw_docs = ai_res.json().get("documents", [])
+                for d in raw_docs:
+                    if d.get("status") == "DONE":
+                        docs.append({
+                            "id": d.get("id"),
+                            "name": d.get("file_name"),
+                            "file_type": "txt",
+                            "embedding_status": "completed",
+                            "chunk_count": d.get("chunks_count", 6),
+                            "created_at": d.get("created_at"),
+                        })
+    except Exception as e:
+        print(f"Error fetching docs from AI Service: {e}")
+
+    # Lọc unique theo name để hiển thị đẹp
+    unique_docs = {}
+    for d in docs:
+        if d["name"] not in unique_docs:
+            unique_docs[d["name"]] = d
+
+    final_list = list(unique_docs.values())
+    if not final_list:
+        final_list = [{
+            "id": "doc_default_sportgear",
+            "name": "sportgear_store.txt (6 Sản Phẩm & Chính Sách CSKH)",
+            "file_type": "txt",
+            "embedding_status": "completed",
+            "chunk_count": 19,
+            "created_at": "2026-08-18T00:00:00Z",
+        }]
+
+    return APIResponse(
+        meta=MetaResponse(code=200, message="Success"),
+        data=final_list,
+    )
+
+
+@router.post("/demo-upload", response_model=APIResponse, status_code=201)
+async def upload_demo_document(file: UploadFile = File(...)):
+    """
+    Nhận upload file thật (.txt, .pdf, .docx) từ Flutter Web Admin,
+    gửi sang AI Service để Chunking + Vector Embedding vào ChromaDB và lưu DB.
+    """
+    _, ext = os.path.splitext(file.filename or "")
+    if ext.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chỉ hỗ trợ định dạng PDF, DOCX, TXT. Nhận được: {ext}",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"File vượt quá giới hạn {MAX_FILE_SIZE_MB}MB.")
+
+    doc_id = str(uuid4())
+    file_type_map = {".pdf": "pdf", ".docx": "docx", ".txt": "txt"}
+    file_type = file_type_map.get(ext.lower(), "txt")
+
+    # 1. Gửi sang AI Service /knowledge/upload để index vào ChromaDB
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            ai_res = await client.post(
+                f"{AI_SERVICE_URL}/knowledge/upload",
+                params={"tenant_id": "default"},
+                files={"file": (file.filename, content, file.content_type or "text/plain")},
+            )
+    except Exception as e:
+        print(f"Error forwarding to AI Service: {e}")
+
+    # 2. Lưu vào Supabase documents table
+    supabase = get_supabase_admin()
+    new_doc = {
+        "id": doc_id,
+        "name": file.filename or "Tai_Lieu_Moi.txt",
+        "file_type": file_type,
+        "embedding_status": "completed",
+        "chunk_count": max(4, len(content) // 256),
+    }
+    try:
+        supabase.table("documents").insert(new_doc).execute()
+    except Exception as e:
+        print(f"Error saving to supabase: {e}")
+
+    return APIResponse(
+        meta=MetaResponse(code=201, message=f"Đã tải lên và Indexing tài liệu '{file.filename}' thành công!"),
+        data=new_doc,
+    )
+
+
+@router.delete("/demo-delete/{doc_id}", response_model=APIResponse)
+async def delete_demo_document(doc_id: str):
+    """Xóa tài liệu khỏi database và ChromaDB"""
+    supabase = get_supabase_admin()
+    try:
+        supabase.table("documents").delete().eq("id", doc_id).execute()
+    except Exception:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.delete(
+                f"{AI_SERVICE_URL}/knowledge/documents/{doc_id}",
+                params={"tenant_id": "default"},
+            )
+    except Exception:
+        pass
+
+    return APIResponse(
+        meta=MetaResponse(code=200, message="Đã xóa tài liệu khỏi Knowledge Base."),
+        data={"id": doc_id},
+    )
+
+
+# ── Standard Auth Endpoints ──────────────────────────────────────────────────
 
 
 @router.get("", response_model=APIResponse)

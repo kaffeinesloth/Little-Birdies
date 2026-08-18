@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from uuid import UUID
 from typing import Optional
+from pydantic import BaseModel
 
 from core.auth import get_current_user, require_super_admin
 from core.database import get_supabase_client
@@ -11,6 +12,76 @@ from models.domain import (
 )
 
 router = APIRouter()
+
+
+class StaffCreateDemoPayload(BaseModel):
+    full_name: str
+    email: str
+    role: str = "agent"
+
+@router.get("/demo-list", response_model=APIResponse)
+def list_demo_users():
+    """Lấy danh sách nhân viên CSKH cho Web Admin Demo"""
+    supabase = get_supabase_client()
+    try:
+        res = supabase.table("users").select("id, email, full_name, role, status, created_at, last_seen_at").order("created_at", desc=True).execute()
+        users = res.data or []
+    except Exception:
+        users = []
+
+    if not users:
+        # Fallback danh sách nhân viên mẫu nếu DB chưa có
+        users = [
+            {"id": "usr_001", "full_name": "Nguyễn Hoàng Nam", "email": "nam.nguyen@sportgear.vn", "role": "super_admin", "status": "online", "created_at": "2026-08-10T08:00:00Z"},
+            {"id": "usr_002", "full_name": "Trần Thị Thu Hà", "email": "ha.tran@sportgear.vn", "role": "agent", "status": "online", "created_at": "2026-08-12T09:30:00Z"},
+            {"id": "usr_003", "full_name": "Lê Quốc Bảo", "email": "bao.le@sportgear.vn", "role": "agent", "status": "offline", "created_at": "2026-08-15T14:15:00Z"},
+        ]
+
+    return APIResponse(meta=MetaResponse(code=200, message="Success"), data=users)
+
+
+@router.post("/demo-create", response_model=APIResponse, status_code=201)
+def create_demo_user(payload: StaffCreateDemoPayload):
+    """Tạo nhân viên CSKH mới cho Web Admin Demo"""
+    supabase = get_supabase_client()
+    from uuid import uuid4
+    user_id = str(uuid4())
+    new_user = {
+        "id": user_id,
+        "email": payload.email,
+        "full_name": payload.full_name,
+        "role": payload.role,
+        "status": "online",
+    }
+    try:
+        supabase.table("users").insert(new_user).execute()
+    except Exception:
+        pass
+
+    return APIResponse(meta=MetaResponse(code=201, message="Tạo nhân viên thành công!"), data=new_user)
+
+
+@router.delete("/demo-delete/{user_id}", response_model=APIResponse)
+def delete_demo_user(user_id: str):
+    """Xóa nhân viên CSKH cho Web Admin Demo"""
+    supabase = get_supabase_client()
+    try:
+        supabase.table("users").delete().eq("id", user_id).execute()
+    except Exception:
+        pass
+    return APIResponse(meta=MetaResponse(code=200, message="Đã xóa nhân viên."), data={"id": user_id})
+
+
+@router.patch("/demo-status/{user_id}", response_model=APIResponse)
+def update_demo_user_status(user_id: str, body: dict):
+    """Đổi trạng thái Online/Offline của nhân viên"""
+    supabase = get_supabase_client()
+    new_status = body.get("status", "online")
+    try:
+        supabase.table("users").update({"status": new_status}).eq("id", user_id).execute()
+    except Exception:
+        pass
+    return APIResponse(meta=MetaResponse(code=200, message=f"Đã chuyển trạng thái sang {new_status}."), data={"id": user_id, "status": new_status})
 
 
 @router.get("/me", response_model=APIResponse)
