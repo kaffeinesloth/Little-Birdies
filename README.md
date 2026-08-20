@@ -2,18 +2,22 @@
 
 Smart Helpdesk is a SaaS platform that helps small and medium online businesses automate customer support with an AI Agent, Retrieval-Augmented Generation (RAG), and a simple ticketing workflow. The system can answer common customer questions automatically, classify message intent, and escalate urgent complaints to human staff through a mobile app.
 
-> Tagline: "Tu dong hoa CSKH. Xu ly khieu nai tuc thi."
+> Tagline: "Automate support. Resolve customer issues immediately."
 
 ## Demo Runbook
 
 Fastest path from a fresh clone: [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
+Complete requirements, installation, local-AI, Android, and troubleshooting guide: [docs/INSTALLATION.md](docs/INSTALLATION.md).
+
 For teammate setup after pulling `main`, see [docs/TEAM_DEMO_GUIDE.md](docs/TEAM_DEMO_GUIDE.md).
+
+For the consolidated Flutter web/mobile staff application, optional local Ollama AI, Android build, and presenter-laptop checklist, see [docs/UNIFIED_DEMO_SETUP.md](docs/UNIFIED_DEMO_SETUP.md).
 
 Quick Docker start:
 
 ```bash
-docker compose up --build
+docker compose up --build --detach --wait
 ```
 
 For a pure fallback demo, `.env` files are optional. For live Supabase ticket persistence, copy the examples and fill real credentials before starting:
@@ -30,11 +34,21 @@ The root `.env` and store Supabase values are optional; without them, the browse
 Demo URLs:
 
 - Store customer chat: http://localhost:3000
-- Flutter staff/admin UI: http://localhost:8080
+- Unified Flutter staff app: http://localhost:8080
 - Backend API docs: http://localhost:8000/api/docs
 - AI health: http://localhost:8001/health
 - AI service docs: http://localhost:8001/docs
 - Optional React admin prototype in `web/` is not served by Docker Compose for the final non-Zalo demo.
+
+### Current Demo Frontends
+
+The final demo keeps the customer store separate and consolidates staff tools into one Flutter application:
+
+- `store/` is the customer shopping website and chat widget.
+- `mobile/` is the unified adaptive staff product. The same code builds for web, Android, and iOS.
+- `web/` is a deprecated React admin prototype and is not part of the Docker demo.
+
+The Flutter app presents a multi-column inbox on desktop and list/detail navigation on phones. Demo roles control access: Support Agent receives only the live support workspace, while Administrator also receives Reports & Revenue, staff management, and AI knowledge management.
 
 ## Team Information
 
@@ -52,7 +66,7 @@ Demo URLs:
 | Field | Detail |
 | --- | --- |
 | Project name | Smart Helpdesk - AI-Powered Customer Support System |
-| Tagline | "Tu dong hoa CSKH. Xu ly khieu nai tuc thi." |
+| Tagline | "Automate support. Resolve customer issues immediately." |
 | Type | SaaS Platform: Web + Mobile App + AI Agent |
 | Domain | Customer Service / SaaS |
 | Target users | Small and medium online shop owners, e-commerce sellers, and customer service staff |

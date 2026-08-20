@@ -8,9 +8,13 @@ RUN flutter pub get
 COPY mobile/ .
 ARG SUPABASE_URL=""
 ARG SUPABASE_ANON_KEY=""
+ARG API_BASE_URL="http://localhost:8000"
+ARG AI_BASE_URL="http://localhost:8001"
 RUN flutter build web --release --pwa-strategy=none \
     --dart-define=SUPABASE_URL=${SUPABASE_URL} \
-    --dart-define=SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    --dart-define=SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY} \
+    --dart-define=API_BASE_URL=${API_BASE_URL} \
+    --dart-define=AI_BASE_URL=${AI_BASE_URL}
 
 FROM nginx:1.27-alpine
 

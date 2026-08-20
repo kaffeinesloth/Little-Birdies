@@ -17,7 +17,7 @@ router = APIRouter()
 DEMO_USERS = [
     {
         "id": "usr_001",
-        "full_name": "Nguyễn Hoàng Nam",
+        "full_name": "Nam Nguyen",
         "email": "nam.nguyen@sportgear.vn",
         "role": "super_admin",
         "status": "online",
@@ -25,7 +25,7 @@ DEMO_USERS = [
     },
     {
         "id": "usr_002",
-        "full_name": "Trần Thị Thu Hà",
+        "full_name": "Ha Tran",
         "email": "ha.tran@sportgear.vn",
         "role": "agent",
         "status": "online",
@@ -33,7 +33,7 @@ DEMO_USERS = [
     },
     {
         "id": "usr_003",
-        "full_name": "Lê Quốc Bảo",
+        "full_name": "Bao Le",
         "email": "bao.le@sportgear.vn",
         "role": "agent",
         "status": "offline",
@@ -82,7 +82,7 @@ def create_demo_user(payload: StaffCreateDemoPayload):
     except Exception:
         pass
 
-    return APIResponse(meta=MetaResponse(code=201, message="Tạo nhân viên thành công!"), data=new_user)
+    return APIResponse(meta=MetaResponse(code=201, message="Agent created successfully."), data=new_user)
 
 
 @router.delete("/demo-delete/{user_id}", response_model=APIResponse)
@@ -93,7 +93,7 @@ def delete_demo_user(user_id: str):
         supabase.table("users").delete().eq("id", user_id).execute()
     except Exception:
         pass
-    return APIResponse(meta=MetaResponse(code=200, message="Đã xóa nhân viên."), data={"id": user_id})
+    return APIResponse(meta=MetaResponse(code=200, message="Agent deleted."), data={"id": user_id})
 
 
 @router.patch("/demo-status/{user_id}", response_model=APIResponse)
@@ -105,7 +105,7 @@ def update_demo_user_status(user_id: str, body: dict):
         supabase.table("users").update({"status": new_status}).eq("id", user_id).execute()
     except Exception:
         pass
-    return APIResponse(meta=MetaResponse(code=200, message=f"Đã chuyển trạng thái sang {new_status}."), data={"id": user_id, "status": new_status})
+    return APIResponse(meta=MetaResponse(code=200, message=f"Status changed to {new_status}."), data={"id": user_id, "status": new_status})
 
 
 @router.get("/me", response_model=APIResponse)
@@ -129,7 +129,7 @@ def update_my_status(
     if payload.status == UserStatus.disabled:
         raise HTTPException(
             status_code=403,
-            detail="Bạn không thể tự vô hiệu hóa tài khoản của mình.",
+            detail="You cannot disable your own account.",
         )
 
     supabase = get_supabase_client()
@@ -144,7 +144,7 @@ def update_my_status(
     return APIResponse(
         meta=MetaResponse(
             code=200,
-            message=f"Trạng thái đã chuyển sang {payload.status.value}.",
+            message=f"Status changed to {payload.status.value}.",
         ),
         data={"status": payload.status.value},
     )
@@ -158,13 +158,13 @@ def update_fcm_token(
     """Mobile app cập nhật FCM token sau khi đăng nhập."""
     token = body.get("fcm_token")
     if not token:
-        raise HTTPException(status_code=400, detail="fcm_token là bắt buộc.")
+        raise HTTPException(status_code=400, detail="fcm_token is required.")
 
     supabase = get_supabase_client()
     supabase.table("users").update({"fcm_token": token}).eq("id", current_user["id"]).execute()
 
     return APIResponse(
-        meta=MetaResponse(code=200, message="FCM token đã được cập nhật."),
+        meta=MetaResponse(code=200, message="FCM token updated."),
         data=None,
     )
 
@@ -232,13 +232,13 @@ def invite_agent(
     except Exception as e:
         error_msg = str(e)
         if "already registered" in error_msg.lower():
-            raise HTTPException(status_code=409, detail="Email đã tồn tại trong hệ thống.")
-        raise HTTPException(status_code=500, detail=f"Không thể tạo tài khoản: {error_msg}")
+            raise HTTPException(status_code=409, detail="Email already exists.")
+        raise HTTPException(status_code=500, detail=f"Could not create account: {error_msg}")
 
     return APIResponse(
         meta=MetaResponse(
             code=201,
-            message=f"Email mời đã được gửi đến {payload.email}.",
+            message=f"Invitation email sent to {payload.email}.",
         ),
         data={"email": payload.email, "role": payload.role.value},
     )
@@ -254,7 +254,7 @@ def update_user_status(
     if str(user_id) == current_user["id"]:
         raise HTTPException(
             status_code=400,
-            detail="Không thể thay đổi trạng thái tài khoản của chính mình.",
+            detail="You cannot change your own account status.",
         )
 
     supabase = get_supabase_client()
@@ -267,12 +267,12 @@ def update_user_status(
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Người dùng không tồn tại.")
+        raise HTTPException(status_code=404, detail="User not found.")
 
     return APIResponse(
         meta=MetaResponse(
             code=200,
-            message=f"Trạng thái tài khoản đã được đổi thành {payload.status.value}.",
+            message=f"Account status changed to {payload.status.value}.",
         ),
         data=None,
     )

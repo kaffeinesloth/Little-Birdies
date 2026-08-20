@@ -27,9 +27,9 @@ from agent.schemas import IntentResult, IntentType
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_gemini_response(data: dict) -> MagicMock:
-    """Tạo mock response giống Interactions API trả về."""
+    """Tạo mock response giống generate_content API trả về."""
     mock = MagicMock()
-    mock.output_text = json.dumps(data)
+    mock.text = json.dumps(data)
     return mock
 
 
@@ -60,9 +60,9 @@ def result_for(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def mock_llm(clf: IntentClassifier, data: dict) -> None:
-    """Helper: patch _client.aio.interactions.create để trả về data dict."""
+    """Helper: patch _client.aio.models.generate_content để trả về data dict."""
     mock_resp = make_gemini_response(data)
-    clf._client.aio.interactions.create = AsyncMock(return_value=mock_resp)
+    clf._client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
 
 
 class TestGeneralFAQ:
@@ -220,7 +220,7 @@ class TestErrorHandling:
     async def test_api_error_returns_fallback(self):
         """Khi Gemini API fail → trả về FALLBACK, không raise exception."""
         clf = make_classifier()
-        clf._client.aio.interactions.create = AsyncMock(
+        clf._client.aio.models.generate_content = AsyncMock(
             side_effect=Exception("API timeout")
         )
         result = await clf.classify("Test message")
@@ -232,8 +232,8 @@ class TestErrorHandling:
         """Khi Gemini trả về JSON lỗi → fallback."""
         clf = make_classifier()
         bad_resp = MagicMock()
-        bad_resp.output_text = "không phải JSON"
-        clf._client.aio.interactions.create = AsyncMock(return_value=bad_resp)
+        bad_resp.text = "không phải JSON"
+        clf._client.aio.models.generate_content = AsyncMock(return_value=bad_resp)
         result = await clf.classify("Test message")
         assert result == _FALLBACK_RESULT
 
@@ -243,8 +243,8 @@ class TestErrorHandling:
         clf = make_classifier()
         raw_data = result_for("GENERAL_FAQ")
         fenced_resp = MagicMock()
-        fenced_resp.output_text = f"```json\n{json.dumps(raw_data)}\n```"
-        clf._client.aio.interactions.create = AsyncMock(return_value=fenced_resp)
+        fenced_resp.text = f"```json\n{json.dumps(raw_data)}\n```"
+        clf._client.aio.models.generate_content = AsyncMock(return_value=fenced_resp)
         result = await clf.classify("Giá sao?")
         assert result.intent == IntentType.GENERAL_FAQ
 
@@ -267,7 +267,7 @@ class TestHistoryFormatting:
     def test_empty_history(self):
         clf = make_classifier()
         result = clf._format_history([])
-        assert "đầu tiên" in result.lower()
+        assert "first message" in result.lower()
 
     def test_history_is_truncated_to_3_turns(self):
         """Chỉ lấy 3 cặp hỏi-đáp gần nhất (6 messages)."""

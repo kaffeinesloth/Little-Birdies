@@ -30,26 +30,25 @@ logger = logging.getLogger(__name__)
 
 # ── Canned responses ─────────────────────────────────────────────────────────
 
-_GREETING_REPLY = "Xin chào! Mình có thể giúp gì cho bạn hôm nay? 😊"
+_GREETING_REPLY = "Hello! How can I help you today? 😊"
 
 _OUT_OF_SCOPE_REPLY = (
-    "Xin lỗi, mình chỉ có thể hỗ trợ các vấn đề liên quan đến sản phẩm "
-    "và dịch vụ của shop. Bạn có câu hỏi nào khác không ạ?"
+    "Sorry, I can only help with the store's products and services. "
+    "Do you have another store-related question?"
 )
 
 _COMPLAINT_ACK = {
     3: (
-        "Mình rất xin lỗi về sự bất tiện này! 🙏 Mình đã chuyển ngay đến nhân viên "
-        "phụ trách và họ sẽ liên hệ với bạn trong vài phút. "
-        "Bạn vui lòng chờ mình một chút nhé!"
+        "We are sorry for the inconvenience. 🙏 This was transferred to the "
+        "responsible support agent, who will contact you within a few minutes."
     ),
     2: (
-        "Cảm ơn bạn đã phản hồi! Mình đã ghi nhận và chuyển đến nhân viên hỗ trợ ngay. "
-        "Thường trong 5–10 phút sẽ có người liên hệ lại với bạn. 😊"
+        "Thank you for letting us know. This was recorded and transferred to a "
+        "support agent, who normally responds within 5–10 minutes. 😊"
     ),
     1: (
-        "Cảm ơn bạn đã liên hệ! Mình cần chuyển câu hỏi này đến bộ phận chuyên trách "
-        "để hỗ trợ bạn tốt hơn. Bạn vui lòng chờ trong giây lát nhé!"
+        "Thank you for contacting us. I need to transfer this question to the "
+        "appropriate support team so they can help you accurately."
     ),
 }
 
@@ -292,7 +291,7 @@ class AgentOrchestrator:
             return ""
         lines = []
         for msg in history[-6:]:
-            label = "Khách" if msg["role"] == "user" else "Bot"
+            label = "Customer" if msg["role"] == "user" else "Bot"
             lines.append(f"{label}: {msg['content'][:200]}")
         summary = "\n".join(lines)
         return summary[:max_chars]

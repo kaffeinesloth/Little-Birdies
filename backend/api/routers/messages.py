@@ -59,7 +59,13 @@ def _insert_bot_reply_once(supabase_admin, ticket_id: str, content: str) -> bool
     return _insert_bot_reply(supabase_admin, ticket_id, text)
 
 
-def _incoming_demo_fallback(payload: IncomingMessage) -> APIResponse:
+async def _incoming_demo_fallback(payload: IncomingMessage) -> APIResponse:
+    """Persist an incoming store message without Supabase and still use AI.
+
+    The demo store is the persistence fallback, not an AI replacement. Keeping
+    the AI request here makes the shopping widget exercise the same Ollama (or
+    deterministic fallback) service as the staff application.
+    """
     ticket_id = demo_store.create_or_reuse_ticket(
         customer_id=payload.customer_id,
         customer_name=payload.customer_name,
@@ -72,17 +78,45 @@ def _incoming_demo_fallback(payload: IncomingMessage) -> APIResponse:
         payload.customer_id,
         payload.content,
     )
+
     action, intent, reply = demo_store.fallback_ai_reply(payload.content)
+    ai_status = "fallback"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            ai_res = await client.post(
+                f"{AI_SERVICE_URL}/process",
+                json={
+                    "ticket_id": ticket_id,
+                    "customer_id": payload.customer_id,
+                    "source": payload.source.value,
+                    "content": payload.content,
+                    "persist_reply": False,
+                },
+            )
+        if ai_res.status_code == 200:
+            ai_data = ai_res.json()
+            generated_reply = (ai_data.get("reply") or "").strip()
+            if generated_reply:
+                reply = generated_reply
+            action = ai_data.get("action") or action
+            ai_status = ai_data.get("provider") or "ok"
+            intent = "complaint" if action == "HANDOFF" else "question"
+    except Exception:
+        # The deterministic reply chosen above keeps the shopping demo usable
+        # if the AI container is still starting or is temporarily unavailable.
+        pass
+
     demo_store.add_bot_reply_once(ticket_id, reply)
     updates = {"intent": intent}
     if action == "HANDOFF":
         updates["status"] = "in_progress"
     demo_store.update_ticket(ticket_id, **updates)
     return APIResponse(
-        meta=MetaResponse(code=202, message="Tin nhắn đã được tiếp nhận."),
+        meta=MetaResponse(code=202, message="Message received."),
         data={
             "ticket_id": ticket_id,
-            "ai_status": "fallback",
+            "ai_status": ai_status,
             "ai_action": action,
         },
     )
@@ -129,7 +163,7 @@ async def incoming_message(payload: IncomingMessage):
                 supabase_admin.table("tickets")
                 .insert({
                     "customer_id": payload.customer_id,
-                    "customer_name": payload.customer_name or "Khách Hàng SportGear",
+                    "customer_name": payload.customer_name or "SportGear Customer",
                     "source": payload.source.value,
                     "status": "open",
                     "summary": payload.content[:120],
@@ -146,7 +180,7 @@ async def incoming_message(payload: IncomingMessage):
             "content": payload.content,
         }).execute()
     except Exception:
-        return _incoming_demo_fallback(payload)
+        return await _incoming_demo_fallback(payload)
 
     ai_status = "skipped"
     ai_action = "NONE"
@@ -206,7 +240,7 @@ async def incoming_message(payload: IncomingMessage):
         ai_action = action
 
     return APIResponse(
-        meta=MetaResponse(code=202, message="Tin nhắn đã được tiếp nhận."),
+        meta=MetaResponse(code=202, message="Message received."),
         data={
             "ticket_id": ticket_id,
             "ai_status": ai_status,
@@ -237,14 +271,14 @@ async def send_message(
     )
 
     if not ticket_result.data:
-        raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+        raise HTTPException(status_code=404, detail="Ticket not found.")
 
     ticket = ticket_result.data
 
     if ticket["status"] == "resolved":
         raise HTTPException(
             status_code=400,
-            detail="Không thể reply ticket đã đóng. Reopen ticket trước.",
+            detail="Cannot reply to a closed ticket. Reopen it first.",
         )
 
     # Lưu message vào DB
@@ -276,7 +310,7 @@ async def send_message(
     )
 
     return APIResponse(
-        meta=MetaResponse(code=201, message="Tin nhắn đã được gửi."),
+        meta=MetaResponse(code=201, message="Message sent."),
         data=msg_result.data[0] if msg_result.data else None,
     )
 
@@ -290,12 +324,12 @@ def _agent_reply_demo_fallback(payload: AgentReplyDemoPayload) -> APIResponse:
     t_id = str(payload.ticket_id).strip()
     ticket_detail = demo_store.get_ticket_detail(t_id)
     if not ticket_detail:
-        raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+        raise HTTPException(status_code=404, detail="Ticket not found.")
     ticket = ticket_detail["ticket"]
     if ticket["status"] == "resolved":
         raise HTTPException(
             status_code=400,
-            detail="Không thể reply ticket đã đóng. Reopen ticket trước.",
+            detail="Cannot reply to a closed ticket. Reopen it first.",
         )
     msg = demo_store.add_message(
         t_id,
@@ -306,7 +340,7 @@ def _agent_reply_demo_fallback(payload: AgentReplyDemoPayload) -> APIResponse:
     if ticket["status"] == "open":
         demo_store.update_ticket(t_id, status="in_progress")
     return APIResponse(
-        meta=MetaResponse(code=201, message="Tin nhắn đã được gửi (Demo)."),
+        meta=MetaResponse(code=201, message="Message sent (demo)."),
         data=msg,
     )
 
@@ -333,14 +367,14 @@ async def send_message_demo(
         return _agent_reply_demo_fallback(payload)
 
     if not ticket_result.data:
-        raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+        raise HTTPException(status_code=404, detail="Ticket not found.")
 
     ticket = ticket_result.data
 
     if ticket["status"] == "resolved":
         raise HTTPException(
             status_code=400,
-            detail="Không thể reply ticket đã đóng. Reopen ticket trước.",
+            detail="Cannot reply to a closed ticket. Reopen it first.",
         )
 
     admin_id = "agent_demo"
@@ -369,7 +403,7 @@ async def send_message_demo(
     )
 
     return APIResponse(
-        meta=MetaResponse(code=201, message="Tin nhắn đã được gửi (Demo)."),
+        meta=MetaResponse(code=201, message="Message sent (demo)."),
         data=msg_result.data[0] if msg_result.data else None,
     )
 

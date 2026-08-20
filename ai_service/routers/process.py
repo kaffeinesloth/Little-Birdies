@@ -34,6 +34,7 @@ class ProcessResponse(BaseModel):
     reply: str
     action: str
     ticket_id: str
+    provider: str
 
 
 @router.post("/process", response_model=ProcessResponse)
@@ -94,9 +95,15 @@ async def process_incoming_message(
         except Exception as e:
             logger.error("Failed to callback backend for ticket %s: %s", payload.ticket_id, e)
 
+    metadata = result.metadata or {}
+    provider = metadata.get("provider")
+    if not provider:
+        provider = "fallback" if metadata.get("fallback") else "cloud"
+
     return ProcessResponse(
         status="ok",
         reply=result.reply or "",
         action=result.action.value if hasattr(result.action, "value") else str(result.action),
         ticket_id=payload.ticket_id,
+        provider=provider,
     )

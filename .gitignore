@@ -35,6 +35,7 @@ mobile/macos/Pods/
 # Local generated data
 chroma_db/
 ai_service/chroma_db/
+ai_service/local_knowledge/
 ai_service/:memory:.ses
 
 # Environment variables — KHONG commit len Git

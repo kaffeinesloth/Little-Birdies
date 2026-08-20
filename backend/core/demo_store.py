@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from threading import Lock
 from typing import Any
+import unicodedata
 from uuid import uuid4
 
 
@@ -13,6 +15,22 @@ _MESSAGES: dict[str, list[dict[str, Any]]] = {}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize(value: str) -> str:
+    stripped = "".join(
+        character
+        for character in unicodedata.normalize("NFD", value)
+        if unicodedata.category(character) != "Mn"
+    )
+    return stripped.replace("đ", "d").replace("Đ", "D").lower()
+
+
+def _contains_phrase(text: str, phrases: list[str]) -> bool:
+    return any(
+        re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
+        for phrase in phrases
+    )
 
 
 def _message(ticket_id: str, sender_type: str, sender_id: str, content: str) -> dict[str, Any]:
@@ -58,38 +76,38 @@ def _ensure_seeded() -> None:
     samples = [
         {
             "customer_id": "demo_web_customer",
-            "customer_name": "Khách Hàng Web (SportGear Store)",
+            "customer_name": "Web Customer (SportGear Store)",
             "source": "web",
             "status": "open",
             "intent": "complaint",
-            "summary": "Sản phẩm áo Polo bị lỗi rách chỉ ở nách, khách yêu cầu đổi ngay trong ngày.",
+            "summary": "The Polo arrived with a torn underarm seam; the customer requests a same-day replacement.",
             "messages": [
-                ("customer", "demo_web_customer", "Chào shop, áo Polo Pro Active mình mới nhận bị rách chỉ ở phần nách, shop đổi mới giúp mình nhé!"),
-                ("bot", "ai-bot", "Dạ SportGear rất tiếc về sự cố này ạ! Em đã chuyển ticket cho nhân viên CSKH hỗ trợ đổi mới tận nhà miễn phí trong 30 ngày."),
+                ("customer", "demo_web_customer", "Hi, my new Polo Pro Active arrived with a torn underarm seam. Could you replace it?"),
+                ("bot", "ai-bot", "We are sorry about that. The ticket was transferred to a support agent for a free at-home replacement under the 30-day policy."),
             ],
         },
         {
             "customer_id": "demo_facebook_customer",
-            "customer_name": "Nguyễn Văn Tuấn (Facebook)",
+            "customer_name": "Tuan Nguyen (Facebook)",
             "source": "facebook",
             "status": "in_progress",
             "intent": "question",
-            "summary": "Tư vấn chọn size giày chạy bộ Ultra Boost 2026 cho người chân bè.",
+            "summary": "Size advice for Ultra Boost 2026 running shoes for wide feet.",
             "messages": [
-                ("customer", "demo_facebook_customer", "Giày Ultra Boost 2026 chân bè ngang 10cm thì nên đi size 42 hay 43 shop?"),
-                ("bot", "ai-bot", "Dạ với form chân bè ngang, bạn nên tăng 1 size lên 43 để chạy bộ thoải mái hơn ạ."),
+                ("customer", "demo_facebook_customer", "For 10 cm wide feet, should I choose size 42 or 43 in the Ultra Boost 2026?"),
+                ("bot", "ai-bot", "For wide feet, we recommend sizing up to 43 for more comfort while running."),
             ],
         },
         {
             "customer_id": "demo_email_customer",
-            "customer_name": "Trần Thị Mai (Email)",
+            "customer_name": "Mai Tran (Email)",
             "source": "email",
             "status": "open",
             "intent": "question",
-            "summary": "Hỏi điều kiện miễn phí vận chuyển toàn quốc và mã giảm giá đơn 1 triệu.",
+            "summary": "Asked about free nationwide shipping and promotions for a 1,000,000 VND order.",
             "messages": [
-                ("customer", "demo_email_customer", "Shop cho mình hỏi đơn hàng trên 1 triệu có được freeship và tặng quà gì không?"),
-                ("bot", "ai-bot", "Dạ mọi đơn hàng từ 500.000đ đều được FREESHIP 100% toàn quốc. Đơn từ 1.000.000đ shop tặng thêm bình giữ nhiệt ạ."),
+                ("customer", "demo_email_customer", "Does an order over 1,000,000 VND include free shipping or a gift?"),
+                ("bot", "ai-bot", "Orders from 500,000 VND receive free nationwide shipping. Orders from 1,000,000 VND also include an insulated bottle."),
             ],
         },
     ]
@@ -138,8 +156,8 @@ def dashboard_stats() -> dict[str, Any]:
             "ai_handled_percent": round((question_count / total * 100) if total else 91.5, 1),
             "avg_response_time": "0.4s",
             "satisfaction_score": "4.9/5.0",
-            "saved_salary": f"{max(6, int(total * 1.8))}.500.000đ/tháng",
-            "estimated_revenue": f"{max(12, total * 3.5):.1f}.000.000đ",
+            "saved_salary": f"{max(6, int(total * 1.8))},500,000 VND/month",
+            "estimated_revenue": f"{max(12, total * 3.5):.1f} million VND",
             "channels": channels,
         }
 
@@ -175,7 +193,7 @@ def create_or_reuse_ticket(
 
         ticket = _ticket(
             customer_id=customer_id,
-            customer_name=customer_name or "Khách Hàng SportGear",
+            customer_name=customer_name or "SportGear Customer",
             source=source,
             status="open",
             intent="question",
@@ -225,28 +243,48 @@ def update_ticket(ticket_id: str, **updates: Any) -> dict[str, Any] | None:
         return ticket
 
 
+def delete_resolved_ticket(ticket_id: str) -> str:
+    """Delete a resolved demo ticket and all of its messages."""
+    with _LOCK:
+        _ensure_seeded()
+        ticket = _TICKETS.get(ticket_id)
+        if not ticket:
+            return "not_found"
+        if ticket.get("status") != "resolved":
+            return "not_resolved"
+        del _TICKETS[ticket_id]
+        _MESSAGES.pop(ticket_id, None)
+        return "deleted"
+
+
 def fallback_ai_reply(content: str) -> tuple[str, str, str]:
-    text = content.lower()
-    if any(keyword in text for keyword in ["rách", "rach", "bị lỗi", "bi loi", "bực", "buc", "xử lý ngay", "xu ly ngay"]):
+    text = _normalize(content)
+    if _contains_phrase(text, ["torn", "defective", "damaged", "fix this now", "rach", "bi loi", "buc", "xu ly ngay"]):
         return (
             "HANDOFF",
             "complaint",
-            "Dạ SportGear rất xin lỗi vì trải nghiệm này ạ. Em đã chuyển ticket cho nhân viên CSKH xử lý ngay và hỗ trợ đổi mới miễn phí cho mình.",
+            "We are sorry about this experience. The ticket was transferred to a support agent for immediate review and a free replacement where eligible.",
         )
-    if any(keyword in text for keyword in ["polo", "pro active", "size l", "áo", "ao"]):
+    if _contains_phrase(text, ["polo", "pro active", "size l", "ao"]):
         return (
             "ANSWER",
             "question",
-            "Dạ Áo Polo Pro Active hiện có giá 399.000đ, đang đủ size M/L/XL. Size L phù hợp khoảng 65-75kg và được đổi size miễn phí trong 30 ngày ạ.",
+            "The Polo Pro Active is 399,000 VND and is available in M, L, and XL. Size L suits approximately 65–75 kg, with free size exchanges within 30 days.",
         )
-    if any(keyword in text for keyword in ["freeship", "free ship", "ship", "vận chuyển", "van chuyen"]):
+    if _contains_phrase(text, ["ultra boost", "shoe", "shoes", "giay", "boost"]):
         return (
             "ANSWER",
             "question",
-            "Dạ SportGear freeship toàn quốc cho đơn từ 500.000đ. Đơn dưới 500.000đ phí ship đồng giá 25.000đ, nội thành có hỗ trợ giao hỏa tốc 2 giờ ạ.",
+            "The Ultra Boost 2026 Running Shoes are 1,250,000 VND, available in sizes 38–44, with at-home size exchanges.",
+        )
+    if _contains_phrase(text, ["free shipping", "freeship", "free ship", "shipping", "ship", "van chuyen"]):
+        return (
+            "ANSWER",
+            "question",
+            "SportGear provides free nationwide shipping from 500,000 VND. Below that amount, shipping is 25,000 VND, with two-hour delivery available in central city areas.",
         )
     return (
         "ANSWER",
         "question",
-        "Dạ SportGear đã nhận tin nhắn của bạn. Em có thể hỗ trợ thông tin sản phẩm, size, freeship, đổi trả và bảo hành ạ.",
+        "SportGear received your message. I can help with products, sizing, shipping, returns, and warranties.",
     )

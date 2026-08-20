@@ -43,11 +43,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart, 
 
           <div className="flex items-baseline gap-2 mb-4">
             <span className="text-lg font-black text-slate-900">
-              {product.price.toLocaleString('vi-VN')}đ
+              {product.price.toLocaleString('en-US')} VND
             </span>
             {product.originalPrice && (
               <span className="text-xs text-slate-400 line-through">
-                {product.originalPrice.toLocaleString('vi-VN')}đ
+                {product.originalPrice.toLocaleString('en-US')} VND
               </span>
             )}
           </div>
@@ -60,13 +60,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart, 
           onClick={() => onAddToCart(product)}
           className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
         >
-          <ShoppingCart className="w-3.5 h-3.5" /> Thêm giỏ
+          <ShoppingCart className="w-3.5 h-3.5" /> Add to cart
         </button>
         <button
-          onClick={() => onAskAI(`Tư vấn giúp mình về sản phẩm ${product.name} (chất liệu, bảo hành...)`)}
+          onClick={() => onAskAI(`Tell me about ${product.name}, including materials, sizing, and warranty.`)}
           className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-slate-200"
         >
-          <MessageCircleQuestion className="w-3.5 h-3.5 text-sky-600" /> Hỏi AI
+          <MessageCircleQuestion className="w-3.5 h-3.5 text-sky-600" /> Ask AI
         </button>
       </div>
     </div>

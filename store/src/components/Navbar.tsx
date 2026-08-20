@@ -14,17 +14,17 @@ export const Navbar: React.FC<{ cartCount: number; onOpenCart: () => void }> = (
             <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-1.5">
               SportGear <span className="text-sky-400 text-xs px-2 py-0.5 rounded bg-sky-950 border border-sky-800 font-bold">STORE</span>
             </h1>
-            <p className="text-[10px] text-slate-400">Trang Bán Hàng Thể Thao Độc Lập (React + Tailwind)</p>
+            <p className="text-[10px] text-slate-400">Independent Sports Store (React + Tailwind)</p>
           </div>
         </div>
 
         {/* Navigation */}
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-300">
-          <a href="#" className="text-sky-400 font-semibold hover:text-sky-300 transition-colors">Trang chủ</a>
-          <a href="#products" className="hover:text-white transition-colors">Thời trang Nam</a>
-          <a href="#products" className="hover:text-white transition-colors">Thời trang Nữ</a>
-          <a href="#products" className="hover:text-white transition-colors">Dụng cụ tập</a>
-          <a href="#policy" className="hover:text-white transition-colors">Chính sách CSKH</a>
+          <a href="#" className="text-sky-400 font-semibold hover:text-sky-300 transition-colors">Home</a>
+          <a href="#products" className="hover:text-white transition-colors">Men</a>
+          <a href="#products" className="hover:text-white transition-colors">Women</a>
+          <a href="#products" className="hover:text-white transition-colors">Equipment</a>
+          <a href="#policy" className="hover:text-white transition-colors">Support Policy</a>
         </nav>
 
         {/* Action icons */}
@@ -38,7 +38,7 @@ export const Navbar: React.FC<{ cartCount: number; onOpenCart: () => void }> = (
           <button
             onClick={onOpenCart}
             className="relative text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors p-2.5 rounded-full cursor-pointer flex items-center gap-1.5"
-            title="Xem giỏ hàng"
+            title="View cart"
           >
             <ShoppingCart className="w-5 h-5" />
             {cartCount > 0 && (

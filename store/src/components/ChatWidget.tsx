@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, X, Send, Bot, UserCheck, Sparkles, RotateCcw, Zap } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -14,14 +14,14 @@ interface MessageItem {
 }
 
 const DEFAULT_WELCOME =
-  '👋 **Xin chào!** Mình là trợ lý AI thông minh của **SportGear Boutique**.\n\nBạn cần tư vấn chọn size, xem bảng giá khuyến mãi, chính sách freeship hay bảo hành đổi trả 30 ngày không ạ?';
+  '👋 **Hello!** I am the AI assistant for **SportGear Boutique**.\n\nI can help with sizing, promotions, free shipping, warranties, and our 30-day return policy.';
 
 const QUICK_PROMPTS = [
-  'Shop có freeship không?',
-  'Áo Polo Pro Active giá bao nhiêu và có size L không?',
-  'Giày Ultra Boost 2026 có size nào?',
-  'Chính sách đổi trả trong bao lâu?',
-  'Tôi muốn gặp nhân viên CSKH trực tiếp',
+  'Do you offer free shipping?',
+  'How much is the Polo Pro Active, and is size L available?',
+  'Which sizes are available for the Ultra Boost 2026?',
+  'What is your return period?',
+  'I would like to speak with a live agent.',
 ];
 
 const CHAT_SESSION_KEY = 'sportgear_chat_customer_id';
@@ -206,7 +206,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
         setIsTyping(false);
         if (!sawReply) {
           addSystemMessage(
-            'Dạ mình đã nhận tin nhắn của bạn. Nếu phản hồi tự động chưa hiện ngay, nhân viên SportGear vẫn có thể tiếp tục trả lời trong khung chat này ạ.',
+            'Your message was received. If an automatic reply does not appear immediately, a SportGear agent can continue the conversation here.',
             `timeout_${ticketId}`
           );
         }
@@ -256,7 +256,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customer_id: customerId,
-          customer_name: 'Khách Hàng SportGear Store',
+          customer_name: 'SportGear Store Customer',
           source: 'web',
           content: text,
         }),
@@ -278,7 +278,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
       console.error('Send error:', e);
       setIsTyping(false);
       addSystemMessage(
-        'Dạ xin lỗi bạn, hệ thống chat đang kết nối chưa ổn định. Bạn thử gửi lại tin nhắn giúp mình nhé!',
+        'Sorry, the chat connection is currently unstable. Please try sending your message again.',
         'err'
       );
     }
@@ -336,14 +336,14 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
                   <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
                 </h3>
                 <p className="text-[11px] text-sky-300 font-medium flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" /> Trực Tuyến 24/7 • Phản Hồi Siêu Tốc
+                  <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" /> Online 24/7 • Fast Responses
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={handleResetChat}
-                title="Tạo cuộc hội thoại mới"
+                title="Start a new conversation"
                 className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -381,13 +381,13 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
                   >
                     {isHuman && (
                       <div className="text-[11px] font-bold text-amber-800 mb-1.5 flex items-center gap-1.5 pb-1 border-b border-amber-200">
-                        <UserCheck className="w-3.5 h-3.5 text-amber-700" /> Nhân Viên CSKH (Human Live Support)
+                        <UserCheck className="w-3.5 h-3.5 text-amber-700" /> Support Agent (Live Human)
                       </div>
                     )}
                     <FormattedMessage content={m.content} isCustomer={isCustomer} />
                   </div>
                   <span className="text-[10px] text-slate-400 px-1 font-medium">
-                    {isCustomer ? 'Bạn' : isHuman ? 'Chuyên Viên CSKH' : 'SportGear AI'} • {m.timeStr}
+                    {isCustomer ? 'You' : isHuman ? 'Support Agent' : 'SportGear AI'} • {m.timeStr}
                   </span>
                 </div>
               );
@@ -400,7 +400,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
                   <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce"></div>
                   <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce [animation-delay:0.2s]"></div>
                   <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce [animation-delay:0.4s]"></div>
-                  <span className="text-[11px] text-slate-400 font-medium pl-1">AI đang soạn câu trả lời...</span>
+                  <span className="text-[11px] text-slate-400 font-medium pl-1">AI is writing a reply...</span>
                 </div>
               </div>
             )}
@@ -427,7 +427,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Nhập câu hỏi tư vấn sản phẩm, freeship, size..."
+              placeholder="Ask about products, shipping, sizing..."
               className="flex-1 bg-slate-100 border-none rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-800 placeholder:text-slate-400"
             />
             <button

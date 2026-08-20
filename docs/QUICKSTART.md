@@ -1,82 +1,61 @@
-# Quickstart: Clone And Run
+# Quickstart: Clone and Run
 
-This is the shortest path for teammates who pull the repo from GitHub and want to run the final non-Zalo demo.
+This is the shortest setup path for the Smart Helpdesk demo. It requires no API keys, database account, Flutter installation, Node.js installation, or Python installation.
 
 ## Requirements
 
-Install:
-
 - Git
-- Docker Desktop or Docker Engine with Docker Compose v2
+- Docker Desktop 4.x (Windows/macOS) or Docker Engine with Compose v2 (Linux)
+- At least 8 GB RAM and 8 GB free disk space
+- Free ports: `3000`, `8000`, `8001`, and `8080`
 
-Optional for local development without Docker:
-
-- Python 3.12
-- Node.js 20
-- Flutter stable
+On Windows, start Docker Desktop before continuing.
 
 ## 1. Clone
 
 ```bash
-git clone <YOUR_GITHUB_REPO_URL>
+git clone https://github.com/kaffeinesloth/Little-Birdies.git
 cd Little-Birdies
 ```
 
-## 2. Start The Demo
+## 2. Start
 
-No `.env` files are required for the fallback class demo.
+Windows PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-demo.ps1
+```
+
+macOS/Linux:
 
 ```bash
-docker compose up --build
+sh scripts/start-demo.sh
 ```
 
-Wait until all four services are healthy/running.
-
-## 3. Open URLs
-
-- Store customer chat: http://localhost:3000
-- Flutter staff/admin UI: http://localhost:8080
-- Backend API docs: http://localhost:8000/api/docs
-- AI health: http://localhost:8001/health
-
-## 4. Demo Messages
-
-Type these in the store chat:
-
-```text
-Shop có freeship không?
-Áo Polo Pro Active giá bao nhiêu và có size L không?
-Sản phẩm bị rách rồi, shop xử lý ngay giúp mình!
-```
-
-Then open Flutter, select the newest `Web Store` ticket, send a staff reply, and click `Hoàn Tất & Đóng`.
-
-## Optional Env Files
-
-Only copy these when using real Supabase/Gemini/Realtime credentials:
+Or use Docker Compose directly on any platform:
 
 ```bash
-cp .env.example .env
-cp backend/.env.example backend/.env
-cp ai_service/.env.example ai_service/.env
-cp store/.env.example store/.env
+docker compose up --build --detach --wait
 ```
 
-Keep values blank for fallback demo mode. Never commit `.env` files.
+The first build can take several minutes. No `.env` file is needed for the standard offline demo.
 
-The root `.env` is only for Docker Compose build-time browser values. Backend and AI secrets belong in their own service env files.
+## 3. Open
 
-## Optional Seed
+- Customer shopping demo: <http://localhost:3000>
+- Unified staff application: <http://localhost:8080>
+- Backend API documentation: <http://localhost:8000/api/docs>
+- AI service status: <http://localhost:8001/health>
 
-Only seed when real Supabase credentials are configured:
+## 4. Demonstrate
 
-```bash
-cd backend
-python seed.py
-
-cd ../ai_service
-python seed_knowledge.py --mode auto
-```
+1. Open the shopping demo and send `Do you offer free shipping?`
+2. Send `My Polo arrived torn. Please help me replace it.`
+3. Open the staff application and select the newest Web conversation.
+4. Reply as an agent and mark the conversation Resolved.
+5. The resolved conversation can now be deleted with **Delete Chat**.
+6. Switch to Administrator to show Reports, staff management, and document upload. Support Agent only has the support workspace.
 
 ## Stop
 
@@ -84,19 +63,10 @@ python seed_knowledge.py --mode auto
 docker compose down
 ```
 
-To also remove local AI vector data:
+Uploaded knowledge and downloaded models are preserved in Docker volumes. To intentionally erase them too:
 
 ```bash
-docker compose down -v
+docker compose down --volumes
 ```
 
-## If Docker Fails
-
-Check Docker is running:
-
-```bash
-docker compose version
-docker compose config --services
-```
-
-If `docker.sock` is missing, start Docker Desktop and run `docker compose up --build` again.
+For local Ollama AI, Android installation, manual development, and troubleshooting, read [INSTALLATION.md](INSTALLATION.md).

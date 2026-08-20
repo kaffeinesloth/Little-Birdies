@@ -57,15 +57,11 @@ class Retriever:
         filtered = [r for r in results if r["similarity"] >= threshold]
 
         if not filtered:
-            # Nếu không có chunk nào qua threshold, vẫn lấy top 1 nếu có keyword match
-            if results and results[0]["similarity"] >= 0.20:
-                filtered = [results[0]]
-            else:
-                logger.debug(
-                    "All results below threshold=%.2f for query='%s...'",
-                    threshold, query[:40],
-                )
-                return [], (results[0]["similarity"] if results else 0.0)
+            logger.debug(
+                "All results below threshold=%.2f for query='%s...'",
+                threshold, query[:40],
+            )
+            return [], (results[0]["similarity"] if results else 0.0)
 
         # 3. MMR reranking: chọn tối đa 3 chunks diverse nhất
         diverse = self._mmr(filtered, top_k=3)

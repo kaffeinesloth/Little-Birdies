@@ -22,9 +22,9 @@ def _normalize(text: str) -> str:
 
 
 _HANDOFF_REPLY = (
-    "Dạ SportGear rất xin lỗi vì trải nghiệm chưa tốt này. "
-    "Mình đã chuyển ngay cuộc trò chuyện cho nhân viên CSKH để kiểm tra và "
-    "hỗ trợ đổi trả/xử lý cho bạn trong ít phút ạ."
+    "We are sorry about this experience. Your conversation has been transferred "
+    "to a SportGear support agent, who will review the issue and help with the "
+    "return or resolution shortly."
 )
 
 
@@ -57,10 +57,15 @@ class DemoFallbackOrchestrator:
     @staticmethod
     def _needs_handoff(norm: str) -> bool:
         handoff_keywords = [
+            "live agent", "human agent", "support agent", "speak to someone",
+            "manager", "representative",
             "gap nhan vien", "gap nguoi", "tu van vien", "nhan vien cskh",
             "human", "agent", "goi quan ly", "gap quan ly",
         ]
         complaint_keywords = [
+            "torn", "defective", "damaged", "broken", "wrong item",
+            "missing item", "not received", "late delivery", "refund",
+            "angry", "scam", "lawsuit", "police", "fix this now",
             "bi rach", "hang loi", "bi loi", "hu hong", "giao sai",
             "thieu hang", "chua nhan", "giao lau", "hoan tien", "buc minh",
             "lua dao", "kien", "bao cong an", "xu ly ngay",
@@ -71,61 +76,61 @@ class DemoFallbackOrchestrator:
 
     @staticmethod
     def _faq_reply(norm: str) -> str:
-        lines: list[str] = ["Dạ SportGear xin gửi bạn thông tin nhanh ạ:"]
+        lines: list[str] = ["Here is the relevant SportGear information:"]
 
-        if any(k in norm for k in ["polo", "pro active", "ao polo", "ao the thao"]):
+        if any(k in norm for k in ["polo", "pro active", "sports polo", "ao polo", "ao the thao"]):
             lines.extend([
                 "",
-                "Áo Polo Thể Thao Pro Active hiện có giá 320.000đ (giá gốc 400.000đ).",
-                "Chất liệu thun cá sấu dệt tổ ong thoáng khí, co giãn 4 chiều, chống nhăn.",
-                "Size: S 50-60kg, M 61-68kg, L 69-76kg, XL 77-85kg, XXL trên 85kg.",
+                "The Polo Pro Active is 320,000 VND (regular price 400,000 VND).",
+                "It uses breathable honeycomb pique with four-way stretch and wrinkle resistance.",
+                "Sizes: S 50–60 kg, M 61–68 kg, L 69–76 kg, XL 77–85 kg, XXL over 85 kg.",
             ])
 
-        if any(k in norm for k in ["ultra boost", "giay", "boost"]):
+        if any(k in norm for k in ["ultra boost", "shoe", "shoes", "giay", "boost"]):
             lines.extend([
                 "",
-                "Giày Chạy Bộ Ultra Boost 2026 hiện có giá 1.250.000đ.",
-                "Shop có size 38-44 và hỗ trợ đổi size tận nhà nếu chưa vừa.",
+                "The Ultra Boost 2026 Running Shoes are 1,250,000 VND.",
+                "Sizes 38–44 are available, with at-home size exchanges if the fit is not right.",
             ])
 
-        if any(k in norm for k in ["size", "chieu cao", "can nang", "kg", "vua"]):
+        if any(k in norm for k in ["size", "height", "weight", "fit", "chieu cao", "can nang", "kg", "vua"]):
             lines.extend([
                 "",
-                "Nếu bạn khoảng 69-76kg thì áo SportGear thường hợp size L.",
-                "Nếu phân vân giữa 2 size, shop khuyên chọn size lớn hơn để vận động thoải mái.",
+                "For a body weight around 69–76 kg, SportGear tops generally fit best in size L.",
+                "If you are between sizes, choose the larger size for more comfortable movement.",
             ])
 
-        if any(k in norm for k in ["freeship", "ship", "van chuyen", "giao hang", "hoa toc"]):
+        if any(k in norm for k in ["free shipping", "freeship", "shipping", "delivery", "ship", "van chuyen", "giao hang", "hoa toc"]):
             lines.extend([
                 "",
-                "Đơn từ 500.000đ được freeship toàn quốc.",
-                "Đơn dưới 500.000đ ship đồng giá 25.000đ.",
-                "Nội thành TP.HCM và Hà Nội có giao hỏa tốc trong 2 giờ.",
+                "Orders of 500,000 VND or more receive free nationwide shipping.",
+                "Orders below 500,000 VND have a flat 25,000 VND shipping fee.",
+                "Two-hour express delivery is available in central Ho Chi Minh City and Hanoi.",
             ])
 
-        if any(k in norm for k in ["doi tra", "bao hanh", "doi size", "tra hang"]):
+        if any(k in norm for k in ["return", "exchange", "warranty", "doi tra", "bao hanh", "doi size", "tra hang"]):
             lines.extend([
                 "",
-                "Shop hỗ trợ đổi size/đổi mẫu miễn phí trong 30 ngày nếu sản phẩm còn nguyên tem mác.",
-                "Sản phẩm được bảo hành 12 tháng cho lỗi kỹ thuật như đường chỉ, khóa kéo, đế giày.",
+                "Size and model exchanges are free within 30 days when the original tags remain attached.",
+                "Products include a 12-month warranty for technical defects such as seams, zippers, and soles.",
             ])
 
-        if any(k in norm for k in ["dia chi", "chi nhanh", "mo cua", "o dau", "cua hang"]):
+        if any(k in norm for k in ["address", "location", "store", "opening hours", "dia chi", "chi nhanh", "mo cua", "o dau", "cua hang"]):
             lines.extend([
                 "",
-                "Chi nhánh TP.HCM: 120 Nguyễn Trãi, Quận 1, mở cửa 08:00-21:30.",
-                "Chi nhánh Hà Nội: 88 Cầu Giấy, mở cửa 08:00-21:30.",
+                "Ho Chi Minh City store: 120 Nguyen Trai Street, District 1, open 08:00–21:30.",
+                "Hanoi store: 88 Cau Giay Street, open 08:00–21:30.",
             ])
 
         if len(lines) == 1:
             lines.extend([
                 "",
-                "Shop có thể tư vấn giá, size, freeship, đổi trả, bảo hành và tình trạng sản phẩm.",
-                "Bạn cho mình biết mẫu sản phẩm hoặc nhu cầu sử dụng để mình tư vấn sát hơn nhé.",
+                "I can help with prices, sizes, shipping, returns, warranties, and product availability.",
+                "Tell me which product you are considering or how you plan to use it for a more specific recommendation.",
             ])
 
         lines.append("")
-        lines.append("Bạn cần mình hỗ trợ chọn size hoặc tạo đơn giao nhanh không ạ?")
+        lines.append("Would you like help choosing a size or arranging fast delivery?")
         return "\n".join(lines)
 
 

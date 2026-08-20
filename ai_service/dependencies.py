@@ -17,6 +17,12 @@ def get_demo_fallback_orchestrator():
     return create_demo_fallback_orchestrator()
 
 
+@lru_cache(maxsize=1)
+def get_local_ollama_orchestrator():
+    from agent.local_ollama import LocalOllamaOrchestrator
+    return LocalOllamaOrchestrator()
+
+
 # ── Singletons (heavy objects — khởi tạo 1 lần) ─────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -64,6 +70,9 @@ async def get_orchestrator():
     from agent.conversation  import ConversationManager
     from services.ticket     import TicketService
     from services.notify     import NotifyService
+
+    if settings.ai_provider.lower() in {"auto", "ollama"}:
+        return get_local_ollama_orchestrator()
 
     if not settings.supabase_url or not settings.supabase_service_key:
         return get_demo_fallback_orchestrator()

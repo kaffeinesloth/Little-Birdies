@@ -1,10 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
 import 'dart:async';
 
 bool supabaseRealtimeEnabled = false;
+
+class AppConfig {
+  static const apiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:8000',
+  );
+  static const aiBaseUrl = String.fromEnvironment(
+    'AI_BASE_URL',
+    defaultValue: 'http://localhost:8001',
+  );
+
+  static Uri api(String path) => Uri.parse('$apiBaseUrl$path');
+  static Uri ai(String path) => Uri.parse('$aiBaseUrl$path');
+}
+
+enum DemoRole {
+  superAdmin('Administrator', 'super_admin'),
+  agent('Support Agent', 'agent');
+
+  const DemoRole(this.label, this.value);
+  final String label;
+  final String value;
+}
+
+enum ServiceConnection { checking, online, offline }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,26 +42,28 @@ void main() async {
     if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
       await Supabase.initialize(
         url: supabaseUrl,
-        anonKey: supabaseAnonKey,
+        publishableKey: supabaseAnonKey,
       );
       supabaseRealtimeEnabled = true;
     } else {
-      print('Supabase init skipped; Flutter demo will use REST polling.');
+      debugPrint('Supabase init skipped; Flutter demo will use REST polling.');
     }
   } catch (e) {
-    print('Supabase init notice: $e');
+    debugPrint('Supabase init notice: $e');
   }
   runApp(const SmartHelpdeskApp());
 }
 
 class SmartHelpdeskApp extends StatelessWidget {
-  const SmartHelpdeskApp({super.key});
+  const SmartHelpdeskApp({super.key, this.enableNetwork = true});
+
+  final bool enableNetwork;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Smart Helpdesk - Quản Trị CSKH SportGear Boutique',
+      title: 'Smart Helpdesk - SportGear Customer Support',
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: 'Roboto',
@@ -48,13 +78,15 @@ class SmartHelpdeskApp extends StatelessWidget {
           displayColor: AppColors.slate900,
         ),
       ),
-      home: const WebAdminWorkspace(),
+      home: WebAdminWorkspace(enableNetwork: enableNetwork),
     );
   }
 }
 
 class WebAdminWorkspace extends StatefulWidget {
-  const WebAdminWorkspace({super.key});
+  const WebAdminWorkspace({super.key, this.enableNetwork = true});
+
+  final bool enableNetwork;
 
   @override
   State<WebAdminWorkspace> createState() => _WebAdminWorkspaceState();
@@ -63,8 +95,13 @@ class WebAdminWorkspace extends StatefulWidget {
 class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   Timer? _pollTimer;
   int _tabIndex = 0;
+  DemoRole _role = DemoRole.superAdmin;
+  ServiceConnection _backendConnection = ServiceConnection.checking;
+  ServiceConnection _aiConnection = ServiceConnection.checking;
+  String _aiProvider = 'checking';
+  bool _mobileConversationOpen = false;
   TicketSource? _channelFilter;
-  TicketStatus? _statusFilter; // ← Mới: filter theo trạng thái
+  TicketStatus? _statusFilter; // Status filter
   SupportTicket _selectedTicket = initialDemoTickets.first;
   bool _humanTakeover = false;
   final _replyController = TextEditingController();
@@ -72,14 +109,14 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   List<SupportTicket> _tickets = List.from(initialDemoTickets);
   List<TicketMessage> _liveMessages = [];
   Map<String, dynamic> _dashboardStats = {};
-  Map<String, dynamic> _productIssues = {}; // ← Mới: dữ liệu sản phẩm lỗi
-  Map<String, dynamic> _agentPerformance = {}; // ← Mới: hiệu suất nhân viên
+  Map<String, dynamic> _productIssues = {}; // Product issue data
+  Map<String, dynamic> _agentPerformance = {}; // Agent performance data
   List<Map<String, dynamic>> _staffList = [];
   List<Map<String, dynamic>> _documentsList = [];
   List<String> _aiSuggestions = [
-    'Dạ chào bạn, với chiều cao và cân nặng của bạn, size L áo Polo Pro Active sẽ vừa vặn và tôn dáng nhất ạ!',
-    'Dạ SportGear hỗ trợ đổi size hoàn toàn miễn phí tại nhà trong vòng 30 ngày nếu bạn mặc chưa vừa nhé!',
-    'Dạ đơn hàng Áo Polo từ 500.000đ được FREESHIP 100% toàn quốc và giao hỏa tốc 2h tại TP.HCM ạ.',
+    'Based on your height and weight, size L in the Polo Pro Active should give you the best fit.',
+    'SportGear offers free at-home size exchanges within 30 days if the fit is not right.',
+    'Polo orders from 500,000 VND include free nationwide shipping and two-hour express delivery in Ho Chi Minh City.',
   ];
   bool _isLoadingSuggestions = false;
 
@@ -87,18 +124,106 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   void initState() {
     super.initState();
     _liveMessages = List.from(_selectedTicket.messages);
-    _fetchTickets();
-    _fetchStats();
-    _fetchStaff();
-    _fetchDocuments();
-    _setupRealtime();
+    _initializeWorkspace();
 
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
-      _fetchTickets(silent: true);
-      if (_selectedTicket.ticketId.isNotEmpty) {
-        _fetchMessages(_selectedTicket.ticketId, silent: true);
+    if (widget.enableNetwork) {
+      _pollTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+        _fetchTickets(silent: true);
+        if (_selectedTicket.ticketId.isNotEmpty) {
+          _fetchMessages(_selectedTicket.ticketId, silent: true);
+        }
+      });
+    }
+  }
+
+  Future<void> _initializeWorkspace() async {
+    await _loadDemoRole();
+    if (!mounted) return;
+    if (!widget.enableNetwork) return;
+    _fetchTickets();
+    if (_role == DemoRole.superAdmin) {
+      _fetchStats();
+      _fetchStaff();
+      _fetchDocuments();
+    }
+    _fetchSystemHealth();
+    _setupRealtime();
+  }
+
+  Future<void> _loadDemoRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('smart_helpdesk_demo_role');
+    if (!mounted || saved == null) return;
+    setState(() {
+      _role = saved == DemoRole.agent.value
+          ? DemoRole.agent
+          : DemoRole.superAdmin;
+      if (_role == DemoRole.agent) {
+        _tabIndex = 0;
+        _dashboardStats = {};
+        _productIssues = {};
+        _agentPerformance = {};
       }
     });
+  }
+
+  Future<void> _setDemoRole(DemoRole role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('smart_helpdesk_demo_role', role.value);
+    if (!mounted) return;
+    setState(() {
+      _role = role;
+      if (_role == DemoRole.agent) {
+        _tabIndex = 0;
+        _dashboardStats = {};
+        _productIssues = {};
+        _agentPerformance = {};
+        _staffList = [];
+        _documentsList = [];
+      }
+    });
+    if (role == DemoRole.superAdmin) {
+      _fetchStats();
+      _fetchStaff();
+      _fetchDocuments();
+    }
+  }
+
+  Future<void> _fetchSystemHealth() async {
+    final backendOnline = await _checkHealth(AppConfig.api('/'));
+    final aiProvider = await _readAiProvider();
+    if (!mounted) return;
+    setState(() {
+      _backendConnection = backendOnline
+          ? ServiceConnection.online
+          : ServiceConnection.offline;
+      _aiConnection = aiProvider != null
+          ? ServiceConnection.online
+          : ServiceConnection.offline;
+      _aiProvider = aiProvider ?? 'offline';
+    });
+  }
+
+  Future<String?> _readAiProvider() async {
+    try {
+      final response = await http
+          .get(AppConfig.ai('/health'))
+          .timeout(const Duration(seconds: 3));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final payload = json.decode(utf8.decode(response.bodyBytes));
+      return payload['provider']?.toString() ?? 'fallback';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> _checkHealth(Uri uri) async {
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 3));
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -138,47 +263,47 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     'in_progress_tickets': 2,
     'resolved_tickets': 9,
     'ai_handled_percent': 91.5,
-    'saved_salary': '21.500.000đ/tháng',
-    'estimated_revenue': '42.000.000đ',
+    'saved_salary': '21,500,000 VND/month',
+    'estimated_revenue': '42,000,000 VND',
     'channels': {'web': 7, 'facebook': 3, 'email': 2},
   };
 
   Map<String, dynamic> _demoProductIssuesFallback() => {
     'top_product_issues': [
       {
-        'product': 'Áo Polo Pro Active',
+        'product': 'Polo Pro Active',
         'complaint_count': 8,
         'top_issues': [
-          'Áo rách chỉ ở nách sau 2 tuần',
-          'Size L nhưng mặc như XL',
-          'Màu bay sau vài lần giặt',
+          'Underarm seam tore after two weeks',
+          'Size L fits like XL',
+          'Color faded after a few washes',
         ],
       },
       {
-        'product': 'Giày Ultra Boost 2026',
+        'product': 'Ultra Boost 2026 Shoes',
         'complaint_count': 5,
         'top_issues': [
-          'Đế giày bong keo sau 1 tháng',
-          'Size 42 bị chật hơn bình thường',
+          'Sole adhesive failed after one month',
+          'Size 42 runs smaller than expected',
         ],
       },
       {
-        'product': 'Quần Gym Flex',
+        'product': 'Gym Flex Pants',
         'complaint_count': 3,
-        'top_issues': ['Đường may bị xổ ở háng'],
+        'top_issues': ['Crotch seam came loose'],
       },
     ],
     'ai_knowledge_gaps': [
-      {'topic': 'Hướng dẫn chăm sóc sản phẩm', 'query_count': 4},
-      {'topic': 'Chương trình thành viên VIP', 'query_count': 2},
-      {'topic': 'Bảo hành giày theo thương hiệu', 'query_count': 1},
+      {'topic': 'Product care instructions', 'query_count': 4},
+      {'topic': 'VIP membership program', 'query_count': 2},
+      {'topic': 'Brand-specific shoe warranties', 'query_count': 1},
     ],
   };
 
   Map<String, dynamic> _demoAgentPerformanceFallback() => {
     'avg_bot_response_seconds': 0.4,
     'avg_human_response_seconds': 185,
-    'ai_vs_human_ratio': '91.5% AI / 8.5% Nhân Viên',
+    'ai_vs_human_ratio': '91.5% AI / 8.5% Human',
     'total_tickets': 12,
     'resolved_tickets': 9,
     'resolution_rate_percent': 91.5,
@@ -199,19 +324,19 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     ],
     'top_agents': [
       {
-        'name': 'Nguyễn Thị Lan (CSKH)',
+        'name': 'Lan Nguyen (Support)',
         'tickets_handled': 24,
         'avg_response_min': 2.1,
         'satisfaction': 4.9,
       },
       {
-        'name': 'Trần Minh Tuấn (Senior)',
+        'name': 'Tuan Tran (Senior)',
         'tickets_handled': 18,
         'avg_response_min': 3.5,
         'satisfaction': 4.8,
       },
       {
-        'name': 'Lê Hồng Anh (Agent)',
+        'name': 'Anh Le (Agent)',
         'tickets_handled': 12,
         'avg_response_min': 4.2,
         'satisfaction': 4.7,
@@ -222,21 +347,21 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   List<Map<String, dynamic>> _demoStaffFallback() => [
     {
       'id': 'usr_001',
-      'full_name': 'Nguyễn Hoàng Nam',
+      'full_name': 'Nam Nguyen',
       'email': 'nam.nguyen@sportgear.vn',
       'role': 'super_admin',
       'status': 'online',
     },
     {
       'id': 'usr_002',
-      'full_name': 'Trần Thị Thu Hà',
+      'full_name': 'Ha Tran',
       'email': 'ha.tran@sportgear.vn',
       'role': 'agent',
       'status': 'online',
     },
     {
       'id': 'usr_003',
-      'full_name': 'Lê Quốc Bảo',
+      'full_name': 'Bao Le',
       'email': 'bao.le@sportgear.vn',
       'role': 'agent',
       'status': 'offline',
@@ -246,7 +371,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   List<Map<String, dynamic>> _demoDocumentsFallback() => [
     {
       'id': 'doc_default_sportgear',
-      'name': 'sportgear_store.txt (6 Sản Phẩm & Chính Sách CSKH)',
+      'name': 'sportgear_store.txt (6 Products & Support Policies)',
       'file_type': 'txt',
       'embedding_status': 'completed',
       'chunk_count': 19,
@@ -264,13 +389,13 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     final rawId = e['id']?.toString() ?? '';
     return SupportTicket(
       number: rawId.hashCode.abs() % 1000,
-      customerName: e['customer_name'] ?? e['customer_id'] ?? 'Khách Hàng',
+      customerName: e['customer_name'] ?? e['customer_id'] ?? 'Customer',
       source: _parseSource(e['source']),
       status: _parseStatus(e['status']),
       intent: _parseIntent(e['intent']),
       summary:
-          e['summary'] ?? e['context_summary'] ?? 'Yêu cầu tư vấn sản phẩm',
-      createdAgo: 'Vừa xong',
+          e['summary'] ?? e['context_summary'] ?? 'Product support request',
+      createdAgo: 'Just now',
       ticketId: rawId,
       messages: [],
     );
@@ -329,9 +454,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   // ── 1. Fetch Danh Sách Tickets Thật ─────────────────────────────────────────
   Future<void> _fetchTickets({bool silent = false}) async {
     try {
-      final res = await http.get(
-        Uri.parse('http://localhost:8000/api/v1/tickets/demo-list'),
-      );
+      final res = await http.get(AppConfig.api('/api/v1/tickets/demo-list'));
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
         final data = (jsonRes['data'] as List?) ?? [];
@@ -371,7 +494,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         }
       }
     } catch (e) {
-      if (!silent) print('Lỗi tải tickets: $e');
+      if (!silent) debugPrint('Failed to load tickets: $e');
       if (!mounted || _tickets.isNotEmpty) return;
       setState(() {
         _tickets = List.from(initialDemoTickets);
@@ -386,7 +509,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     if (ticketId.isEmpty) return;
     try {
       final res = await http.get(
-        Uri.parse('http://localhost:8000/api/v1/tickets/demo-detail/$ticketId'),
+        AppConfig.api('/api/v1/tickets/demo-detail/$ticketId'),
       );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
@@ -420,7 +543,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         _scrollToBottom();
       }
     } catch (e) {
-      if (!silent) print('Lỗi tải tin nhắn: $e');
+      if (!silent) debugPrint('Failed to load messages: $e');
       if (!mounted ||
           ticketId != _selectedTicket.ticketId ||
           _liveMessages.isNotEmpty) {
@@ -438,9 +561,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     setState(() => _isLoadingSuggestions = true);
     try {
       final res = await http.get(
-        Uri.parse(
-          'http://localhost:8000/api/v1/tickets/demo-ai-suggest/$ticketId',
-        ),
+        AppConfig.api('/api/v1/tickets/demo-ai-suggest/$ticketId'),
       );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
@@ -464,15 +585,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   Future<void> _fetchStats() async {
     try {
       final futures = await Future.wait([
-        http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-stats')),
-        http.get(
-          Uri.parse('http://localhost:8000/api/v1/tickets/demo-product-issues'),
-        ),
-        http.get(
-          Uri.parse(
-            'http://localhost:8000/api/v1/tickets/demo-agent-performance',
-          ),
-        ),
+        http.get(AppConfig.api('/api/v1/tickets/demo-stats')),
+        http.get(AppConfig.api('/api/v1/tickets/demo-product-issues')),
+        http.get(AppConfig.api('/api/v1/tickets/demo-agent-performance')),
       ]);
       if (futures[0].statusCode == 200) {
         setState(
@@ -499,7 +614,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         setState(() => _agentPerformance = _demoAgentPerformanceFallback());
       }
     } catch (e) {
-      print('Lỗi tải stats: $e');
+      debugPrint('Failed to load stats: $e');
       if (!mounted) return;
       setState(() {
         if (_dashboardStats.isEmpty) _dashboardStats = _demoStatsFallback();
@@ -516,9 +631,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   // ── 5. Fetch Danh Sách Nhân Viên Thật ──────────────────────────────────────
   Future<void> _fetchStaff() async {
     try {
-      final res = await http.get(
-        Uri.parse('http://localhost:8000/api/v1/users/demo-list'),
-      );
+      final res = await http.get(AppConfig.api('/api/v1/users/demo-list'));
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
         setState(() {
@@ -528,7 +641,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         setState(() => _staffList = _demoStaffFallback());
       }
     } catch (e) {
-      print('Lỗi tải nhân viên: $e');
+      debugPrint('Failed to load agents: $e');
       if (!mounted || _staffList.isNotEmpty) return;
       setState(() => _staffList = _demoStaffFallback());
     }
@@ -537,9 +650,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   // ── 6. Fetch Danh Sách Tài Liệu Thật (ChromaDB) ────────────────────────────
   Future<void> _fetchDocuments() async {
     try {
-      final res = await http.get(
-        Uri.parse('http://localhost:8000/api/v1/documents/demo-list'),
-      );
+      final res = await http.get(AppConfig.api('/api/v1/documents/demo-list'));
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
         setState(() {
@@ -551,7 +662,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         setState(() => _documentsList = _demoDocumentsFallback());
       }
     } catch (e) {
-      print('Lỗi tải tài liệu: $e');
+      debugPrint('Failed to load documents: $e');
       if (!mounted || _documentsList.isNotEmpty) return;
       setState(() => _documentsList = _demoDocumentsFallback());
     }
@@ -579,7 +690,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
           )
           .subscribe();
     } catch (e) {
-      print('Lỗi Realtime: $e');
+      debugPrint('Realtime connection failed: $e');
     }
   }
 
@@ -597,7 +708,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 
     try {
       final res = await http.post(
-        Uri.parse('http://localhost:8000/api/v1/messages/agent-reply-demo'),
+        AppConfig.api('/api/v1/messages/agent-reply-demo'),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
         body: json.encode({'ticket_id': ticketId, 'content': text}),
       );
@@ -610,19 +721,19 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Chưa gửi được phản hồi. Vui lòng thử lại trong giây lát.',
+              'The reply could not be sent. Please try again shortly.',
             ),
             backgroundColor: AppColors.danger,
           ),
         );
       }
     } catch (e) {
-      print('Lỗi gửi tin nhắn: $e');
+      debugPrint('Failed to send message: $e');
       if (!mounted) return;
       _replyController.text = text;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Mất kết nối backend, phản hồi chưa được gửi.'),
+          content: Text('Backend connection lost. The reply was not sent.'),
           backgroundColor: AppColors.danger,
         ),
       );
@@ -634,8 +745,8 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     if (_selectedTicket.ticketId.isEmpty) return;
     try {
       final res = await http.patch(
-        Uri.parse(
-          'http://localhost:8000/api/v1/tickets/demo-status/${_selectedTicket.ticketId}',
+        AppConfig.api(
+          '/api/v1/tickets/demo-status/${_selectedTicket.ticketId}',
         ),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
         body: json.encode({'status': newStatus}),
@@ -648,14 +759,98 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Đã cập nhật trạng thái ticket: $newStatus'),
+            content: Text('Ticket status updated: $newStatus'),
             backgroundColor: AppColors.success,
             duration: const Duration(seconds: 2),
           ),
         );
       }
     } catch (e) {
-      print('Lỗi cập nhật trạng thái: $e');
+      debugPrint('Failed to update status: $e');
+    }
+  }
+
+  Future<void> _deleteResolvedConversation() async {
+    final ticket = _selectedTicket;
+    if (ticket.status != TicketStatus.resolved || ticket.ticketId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Resolve the conversation before deleting it.'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete resolved conversation?'),
+        content: Text(
+          'This permanently removes ticket #${ticket.number} for '
+          '${ticket.customerName} and all of its messages.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: const Text('Delete'),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final response = await http.delete(
+        AppConfig.api('/api/v1/tickets/demo-delete/${ticket.ticketId}'),
+      );
+      if (!mounted) return;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Delete failed with status ${response.statusCode}');
+      }
+
+      final remaining = _tickets
+          .where((item) => item.ticketId != ticket.ticketId)
+          .toList();
+      final nextTicket = remaining.isNotEmpty
+          ? remaining.first
+          : initialDemoTickets.first;
+      setState(() {
+        _tickets = remaining.isNotEmpty
+            ? remaining
+            : List<SupportTicket>.from(initialDemoTickets);
+        _selectedTicket = nextTicket;
+        _liveMessages = List<TicketMessage>.from(nextTicket.messages);
+        _humanTakeover = nextTicket.status == TicketStatus.inProgress;
+        _statusFilter = null;
+        _mobileConversationOpen = false;
+      });
+
+      if (nextTicket.ticketId.isNotEmpty) {
+        _fetchMessages(nextTicket.ticketId);
+        _fetchAiSuggestions(nextTicket.ticketId);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Resolved conversation deleted.'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+    } catch (error) {
+      debugPrint('Failed to delete conversation: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The conversation could not be deleted.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
     }
   }
 
@@ -668,131 +863,276 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 
   // ── 10. Dialog Upload Tài Liệu Vào ChromaDB (Dành Cho Quản Lý) ─────────────
   void _showUploadDocumentDialog() {
-    final nameCtrl = TextEditingController();
-    final contentCtrl = TextEditingController();
+    PlatformFile? selectedFile;
+    Uint8List? selectedBytes;
+    var selectedSize = 0;
+    var isPicking = false;
+    var isUploading = false;
+    String? dialogError;
+
+    String formatFileSize(int bytes) {
+      if (bytes < 1024) return '$bytes B';
+      if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.cloud_upload_rounded, color: AppColors.primary),
-            SizedBox(width: 8),
-            Text(
-              'Nạp Tài Liệu Tri Thức Vào ChromaDB',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Row(
             children: [
-              const Text(
-                'Chức năng dành riêng cho Quản Lý: Tài liệu sẽ được chunking và embedding thành vector 768-dim để AI bot học và tra cứu:',
-                style: TextStyle(fontSize: 12, color: AppColors.slate600),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: nameCtrl,
-                decoration: InputDecoration(
-                  labelText: 'Tên tài liệu (.txt, .pdf, .docx)',
-                  hintText: 'Ví dụ: Bang_Gia_Khuyen_Mai_Thang_8.txt',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: contentCtrl,
-                maxLines: 6,
-                decoration: InputDecoration(
-                  labelText: 'Nội dung kiến thức cần nạp cho AI',
-                  hintText:
-                      'Nhập thông số sản phẩm mới, bảng size, quy định bảo hành hoặc chính sách freeship...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+              Icon(Icons.cloud_upload_rounded, color: AppColors.primary),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Upload Knowledge Document',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                 ),
               ),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Hủy'),
-          ),
-          FilledButton.icon(
-            icon: const Icon(Icons.check, size: 16),
-            label: const Text('Nạp & Indexing Ngay'),
-            onPressed: () async {
-              final name = nameCtrl.text.trim();
-              final content = contentCtrl.text.trim();
-              if (name.isEmpty || content.isEmpty) return;
-
-              Navigator.pop(ctx);
-              try {
-                final uri = Uri.parse(
-                  'http://localhost:8000/api/v1/documents/demo-upload',
-                );
-                final request = http.MultipartRequest('POST', uri)
-                  ..files.add(
-                    http.MultipartFile.fromString(
-                      'file',
-                      content,
-                      filename: name.endsWith('.txt') ? name : '$name.txt',
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Choose a document from this device. The AI will extract its text and add it to the local knowledge base.',
+                  style: TextStyle(fontSize: 13, color: AppColors.slate600),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Supported: PDF, DOCX, TXT • Maximum size: 10 MB',
+                  style: TextStyle(fontSize: 12, color: AppColors.slate500),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: isPicking
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.folder_open_rounded),
+                    label: Text(
+                      isPicking ? 'Opening file picker...' : 'Choose Document',
                     ),
-                  );
-                final streamedResponse = await request.send();
-                final response = await http.Response.fromStream(
-                  streamedResponse,
-                );
-
-                if (response.statusCode == 201) {
-                  final jsonRes = json.decode(utf8.decode(response.bodyBytes));
-                  final uploadedDoc = Map<String, dynamic>.from(
-                    jsonRes['data'] ?? {},
-                  );
-                  if (uploadedDoc.isNotEmpty && mounted) {
-                    setState(() {
-                      _documentsList = [
-                        uploadedDoc,
-                        ..._documentsList.where(
-                          (doc) => doc['id'] != uploadedDoc['id'],
-                        ),
-                      ];
-                    });
-                  }
-                  _fetchDocuments();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Đã nạp và Index tài liệu "$name" vào ChromaDB thành công!',
+                    onPressed: isPicking || isUploading
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              isPicking = true;
+                              dialogError = null;
+                            });
+                            try {
+                              final file = await FilePicker.pickFile(
+                                type: FileType.custom,
+                                allowedExtensions: const ['pdf', 'docx', 'txt'],
+                              );
+                              if (file == null) return;
+                              final size = await file.length();
+                              if (size > 10 * 1024 * 1024) {
+                                if (!ctx.mounted) return;
+                                setDialogState(() {
+                                  selectedFile = null;
+                                  selectedBytes = null;
+                                  selectedSize = 0;
+                                  dialogError =
+                                      'The selected file is larger than 10 MB.';
+                                });
+                                return;
+                              }
+                              final bytes = await file.readAsBytes();
+                              if (!ctx.mounted) return;
+                              setDialogState(() {
+                                selectedFile = file;
+                                selectedBytes = bytes;
+                                selectedSize = size;
+                              });
+                            } catch (e) {
+                              if (!ctx.mounted) return;
+                              setDialogState(() {
+                                dialogError =
+                                    'Could not read the selected file.';
+                              });
+                              debugPrint('Failed to pick document: $e');
+                            } finally {
+                              if (ctx.mounted) {
+                                setDialogState(() => isPicking = false);
+                              }
+                            }
+                          },
+                  ),
+                ),
+                if (selectedFile != null) ...[
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.successSoft,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: AppColors.success.withValues(alpha: 0.35),
                       ),
-                      backgroundColor: AppColors.success,
                     ),
-                  );
-                } else {
-                  _showDemoSnack(
-                    'Chưa nạp được tài liệu. Vui lòng kiểm tra backend/AI service.',
-                    color: AppColors.danger,
-                  );
-                }
-              } catch (e) {
-                print('Lỗi upload document: $e');
-                _showDemoSnack(
-                  'Mất kết nối backend, tài liệu chưa được nạp.',
-                  color: AppColors.danger,
-                );
-              }
-            },
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.description_rounded,
+                          color: AppColors.success,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                selectedFile!.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                formatFileSize(selectedSize),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.slate600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Remove selected file',
+                          onPressed: isUploading
+                              ? null
+                              : () => setDialogState(() {
+                                  selectedFile = null;
+                                  selectedBytes = null;
+                                  selectedSize = 0;
+                                }),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (dialogError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    dialogError!,
+                    style: const TextStyle(
+                      color: AppColors.danger,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: isUploading ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              icon: isUploading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.cloud_upload_rounded, size: 16),
+              label: Text(isUploading ? 'Uploading...' : 'Upload & Index'),
+              onPressed:
+                  selectedFile == null || selectedBytes == null || isUploading
+                  ? null
+                  : () async {
+                      final file = selectedFile!;
+                      setDialogState(() {
+                        isUploading = true;
+                        dialogError = null;
+                      });
+                      try {
+                        final request =
+                            http.MultipartRequest(
+                                'POST',
+                                AppConfig.api('/api/v1/documents/demo-upload'),
+                              )
+                              ..files.add(
+                                http.MultipartFile.fromBytes(
+                                  'file',
+                                  selectedBytes!,
+                                  filename: file.name,
+                                ),
+                              );
+                        final response = await http.Response.fromStream(
+                          await request.send(),
+                        );
+                        if (response.statusCode != 201) {
+                          var detail = 'The document could not be uploaded.';
+                          try {
+                            final body = json.decode(
+                              utf8.decode(response.bodyBytes),
+                            );
+                            detail = body['detail']?.toString() ?? detail;
+                          } catch (_) {}
+                          if (!ctx.mounted) return;
+                          setDialogState(() {
+                            isUploading = false;
+                            dialogError = detail;
+                          });
+                          return;
+                        }
+
+                        final jsonRes = json.decode(
+                          utf8.decode(response.bodyBytes),
+                        );
+                        final uploadedDoc = Map<String, dynamic>.from(
+                          jsonRes['data'] ?? {},
+                        );
+                        if (uploadedDoc.isNotEmpty && mounted) {
+                          setState(() {
+                            _documentsList = [
+                              uploadedDoc,
+                              ..._documentsList.where(
+                                (doc) => doc['id'] != uploadedDoc['id'],
+                              ),
+                            ];
+                          });
+                        }
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _fetchDocuments();
+                        _showDemoSnack(
+                          'Document "${file.name}" was uploaded and indexed successfully.',
+                          color: AppColors.success,
+                        );
+                      } catch (e) {
+                        debugPrint('Failed to upload document: $e');
+                        if (!ctx.mounted) return;
+                        setDialogState(() {
+                          isUploading = false;
+                          dialogError =
+                              'Backend connection lost. The document was not uploaded.';
+                        });
+                      }
+                    },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -801,7 +1141,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   void _deleteDocument(String docId, String name) async {
     try {
       final response = await http.delete(
-        Uri.parse('http://localhost:8000/api/v1/documents/demo-delete/$docId'),
+        AppConfig.api('/api/v1/documents/demo-delete/$docId'),
       );
       if (mounted && response.statusCode >= 200 && response.statusCode < 300) {
         setState(() {
@@ -811,14 +1151,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         });
       }
       _fetchDocuments();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Đã xóa tài liệu "$name" khỏi Knowledge Base.'),
-          backgroundColor: AppColors.slate700,
-        ),
-      );
+      _showDemoSnack('Removed "$name" from the knowledge base.');
     } catch (e) {
-      print('Lỗi xóa document: $e');
+      debugPrint('Failed to delete document: $e');
       if (!mounted) return;
       setState(() {
         _documentsList = _documentsList
@@ -826,7 +1161,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
             .toList();
       });
       _showDemoSnack(
-        'Backend chưa sẵn sàng, đã ẩn tài liệu khỏi màn hình demo.',
+        'Backend unavailable. The document was hidden from the demo screen.',
       );
     }
   }
@@ -849,7 +1184,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
               Icon(Icons.person_add_rounded, color: AppColors.primary),
               SizedBox(width: 8),
               Text(
-                'Thêm Nhân Viên CSKH Mới',
+                'Add Support Agent',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
               ),
             ],
@@ -862,8 +1197,8 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 TextField(
                   controller: nameCtrl,
                   decoration: InputDecoration(
-                    labelText: 'Họ và Tên',
-                    hintText: 'Ví dụ: Nguyễn Văn Hoàng',
+                    labelText: 'Full Name',
+                    hintText: 'Example: Alex Morgan',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -873,8 +1208,8 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 TextField(
                   controller: emailCtrl,
                   decoration: InputDecoration(
-                    labelText: 'Email Đăng Nhập',
-                    hintText: 'Ví dụ: hoang.nguyen@sportgear.vn',
+                    labelText: 'Login Email',
+                    hintText: 'Example: alex.morgan@sportgear.test',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -882,9 +1217,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 ),
                 const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
-                  value: role,
+                  initialValue: role,
                   decoration: InputDecoration(
-                    labelText: 'Vai Trò Phân Quyền',
+                    labelText: 'Access Role',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -892,15 +1227,15 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                   items: const [
                     DropdownMenuItem(
                       value: 'agent',
-                      child: Text('Nhân Viên Tư Vấn (Agent)'),
+                      child: Text('Support Agent'),
                     ),
                     DropdownMenuItem(
                       value: 'senior_agent',
-                      child: Text('Trưởng Ca CSKH (Senior Agent)'),
+                      child: Text('Senior Support Agent'),
                     ),
                     DropdownMenuItem(
                       value: 'super_admin',
-                      child: Text('Chủ Shop / Quản Trị Viên (Super Admin)'),
+                      child: Text('Store Owner / Administrator'),
                     ),
                   ],
                   onChanged: (val) =>
@@ -912,7 +1247,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Hủy'),
+              child: const Text('Cancel'),
             ),
             FilledButton(
               onPressed: () async {
@@ -923,7 +1258,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 Navigator.pop(ctx);
                 try {
                   final res = await http.post(
-                    Uri.parse('http://localhost:8000/api/v1/users/demo-create'),
+                    AppConfig.api('/api/v1/users/demo-create'),
                     headers: {
                       'Content-Type': 'application/json; charset=utf-8',
                     },
@@ -952,14 +1287,12 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                     }
                   }
                   _fetchStaff();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Đã tạo nhân viên $name thành công!'),
-                      backgroundColor: AppColors.success,
-                    ),
+                  _showDemoSnack(
+                    'Agent $name was created successfully.',
+                    color: AppColors.success,
                   );
                 } catch (e) {
-                  print('Lỗi tạo nhân viên: $e');
+                  debugPrint('Failed to create agent: $e');
                   if (!mounted) return;
                   final localUser = {
                     'id': 'local_${DateTime.now().millisecondsSinceEpoch}',
@@ -970,11 +1303,11 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                   };
                   setState(() => _staffList = [localUser, ..._staffList]);
                   _showDemoSnack(
-                    'Backend chưa sẵn sàng, đã thêm nhân viên tạm cho màn hình demo.',
+                    'Backend unavailable. A temporary agent was added to the demo screen.',
                   );
                 }
               },
-              child: const Text('Lưu Nhân Viên'),
+              child: const Text('Save Agent'),
             ),
           ],
         ),
@@ -985,7 +1318,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   void _deleteStaff(String userId, String name) async {
     try {
       final response = await http.delete(
-        Uri.parse('http://localhost:8000/api/v1/users/demo-delete/$userId'),
+        AppConfig.api('/api/v1/users/demo-delete/$userId'),
       );
       if (mounted && response.statusCode >= 200 && response.statusCode < 300) {
         setState(() {
@@ -995,14 +1328,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         });
       }
       _fetchStaff();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Đã xóa nhân viên $name khỏi hệ thống.'),
-          backgroundColor: AppColors.slate700,
-        ),
-      );
+      _showDemoSnack('Removed agent $name from the system.');
     } catch (e) {
-      print('Lỗi xóa nhân viên: $e');
+      debugPrint('Failed to delete agent: $e');
       if (!mounted) return;
       setState(() {
         _staffList = _staffList
@@ -1010,7 +1338,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
             .toList();
       });
       _showDemoSnack(
-        'Backend chưa sẵn sàng, đã ẩn nhân viên khỏi màn hình demo.',
+        'Backend unavailable. The agent was hidden from the demo screen.',
       );
     }
   }
@@ -1019,7 +1347,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     final newStatus = currentStatus == 'online' ? 'offline' : 'online';
     try {
       final response = await http.patch(
-        Uri.parse('http://localhost:8000/api/v1/users/demo-status/$userId'),
+        AppConfig.api('/api/v1/users/demo-status/$userId'),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
         body: json.encode({'status': newStatus}),
       );
@@ -1036,7 +1364,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
       }
       _fetchStaff();
     } catch (e) {
-      print('Lỗi đổi trạng thái nhân viên: $e');
+      debugPrint('Failed to change agent status: $e');
       if (!mounted) return;
       setState(() {
         _staffList = _staffList
@@ -1048,7 +1376,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
             .toList();
       });
       _showDemoSnack(
-        'Backend chưa sẵn sàng, đã đổi trạng thái tạm trên màn hình demo.',
+        'Backend unavailable. The status was changed temporarily on the demo screen.',
       );
     }
   }
@@ -1079,96 +1407,157 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Column(
-        children: [
-          _WebHeader(
-            selectedIndex: _tabIndex,
-            onTabChanged: (index) {
-              setState(() => _tabIndex = index);
-              if (index == 0) _fetchTickets();
-              if (index == 1) _fetchStats();
-              if (index == 2) {
-                _fetchStaff();
-                _fetchDocuments();
-              }
-            },
-            onRefreshAll: () {
-              _fetchTickets();
-              _fetchStats();
-              _fetchStaff();
-              _fetchDocuments();
-              if (_selectedTicket.ticketId.isNotEmpty) {
-                _fetchMessages(_selectedTicket.ticketId);
-                _fetchAiSuggestions(_selectedTicket.ticketId);
-              }
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Đã làm mới toàn bộ dữ liệu hệ thống!'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
-            },
+    void selectTab(int index) {
+      if (_role == DemoRole.agent && index != 0) return;
+      setState(() => _tabIndex = index);
+      if (index == 0) _fetchTickets();
+      if (index == 1) _fetchStats();
+      if (index == 2) {
+        _fetchStaff();
+        _fetchDocuments();
+      }
+    }
+
+    void refreshAll() {
+      _fetchTickets();
+      if (_role == DemoRole.superAdmin) {
+        _fetchStats();
+        _fetchStaff();
+        _fetchDocuments();
+      }
+      _fetchSystemHealth();
+      if (_selectedTicket.ticketId.isNotEmpty) {
+        _fetchMessages(_selectedTicket.ticketId);
+        _fetchAiSuggestions(_selectedTicket.ticketId);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All system data has been refreshed.'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+        final navigationItems = <BottomNavigationBarItem>[
+          const BottomNavigationBarItem(
+            icon: Icon(Icons.forum_rounded),
+            label: 'Inbox',
           ),
-          _DemoGuideBanner(tabIndex: _tabIndex),
-          Expanded(
-            child: IndexedStack(
-              index: _tabIndex,
-              children: [
-                // Tab 0: Không Gian Live Chat & Khách Hàng (Full Height, Independent Scroll)
-                _LiveWorkspaceLayout(
-                  tickets: _tickets,
-                  selectedTicket: _selectedTicket,
-                  channelFilter: _channelFilter,
-                  statusFilter: _statusFilter,
-                  humanTakeover: _humanTakeover,
-                  liveMessages: _liveMessages,
-                  replyController: _replyController,
-                  chatScrollController: _chatScrollController,
-                  aiSuggestions: _aiSuggestions,
-                  isLoadingSuggestions: _isLoadingSuggestions,
-                  onSelectTicket: (ticket) {
-                    setState(() {
-                      _selectedTicket = ticket;
-                      _humanTakeover = ticket.status == TicketStatus.inProgress;
-                      _liveMessages = List.from(ticket.messages);
-                    });
-                    _fetchMessages(ticket.ticketId);
-                    _fetchAiSuggestions(ticket.ticketId);
-                  },
-                  onChannelFilter: (filter) =>
-                      setState(() => _channelFilter = filter),
-                  onStatusFilter: (status) =>
-                      setState(() => _statusFilter = status),
-                  onToggleTakeover: _toggleHumanTakeover,
-                  onResolveTicket: () => _updateTicketStatus('resolved'),
-                  onUpdateStatus: (st) => _updateTicketStatus(st),
-                  onFillDraft: (text) =>
-                      setState(() => _replyController.text = text),
-                  onSendReply: _sendReply,
-                ),
-                // Tab 1: Analytics & Executive Dashboard
-                _AnalyticsDashboard(
-                  stats: _dashboardStats,
-                  productIssues: _productIssues,
-                  agentPerformance: _agentPerformance,
-                ),
-                // Tab 2: Quản Lý Hệ Thống & Bộ Tri Thức AI (Dành Riêng Cho Quản Lý)
-                _AdminManagementDashboard(
-                  staffList: _staffList,
-                  documentsList: _documentsList,
-                  onAddStaff: _showAddStaffDialog,
-                  onDeleteStaff: _deleteStaff,
-                  onToggleStatus: _toggleStaffStatus,
-                  onUploadDocument: _showUploadDocumentDialog,
-                  onDeleteDocument: _deleteDocument,
-                ),
-              ],
+          if (_role == DemoRole.superAdmin) ...[
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.analytics_rounded),
+              label: 'Reports',
             ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.admin_panel_settings_rounded),
+              label: 'Manage',
+            ),
+          ],
+        ];
+
+        final content = IndexedStack(
+          index: _tabIndex,
+          children: [
+            _LiveWorkspaceLayout(
+              compact: compact,
+              showConversation: _mobileConversationOpen,
+              tickets: _tickets,
+              selectedTicket: _selectedTicket,
+              channelFilter: _channelFilter,
+              statusFilter: _statusFilter,
+              humanTakeover: _humanTakeover,
+              liveMessages: _liveMessages,
+              replyController: _replyController,
+              chatScrollController: _chatScrollController,
+              aiSuggestions: _aiSuggestions,
+              isLoadingSuggestions: _isLoadingSuggestions,
+              onBackToTickets: () =>
+                  setState(() => _mobileConversationOpen = false),
+              onSelectTicket: (ticket) {
+                setState(() {
+                  _selectedTicket = ticket;
+                  _humanTakeover = ticket.status == TicketStatus.inProgress;
+                  _liveMessages = List.from(ticket.messages);
+                  _mobileConversationOpen = true;
+                });
+                _fetchMessages(ticket.ticketId);
+                _fetchAiSuggestions(ticket.ticketId);
+              },
+              onChannelFilter: (filter) =>
+                  setState(() => _channelFilter = filter),
+              onStatusFilter: (status) =>
+                  setState(() => _statusFilter = status),
+              onToggleTakeover: _toggleHumanTakeover,
+              onResolveTicket: () => _updateTicketStatus('resolved'),
+              onDeleteConversation: _deleteResolvedConversation,
+              onUpdateStatus: (st) => _updateTicketStatus(st),
+              onFillDraft: (text) =>
+                  setState(() => _replyController.text = text),
+              onSendReply: _sendReply,
+            ),
+            if (_role == DemoRole.superAdmin) ...[
+              _AnalyticsDashboard(
+                compact: compact,
+                stats: _dashboardStats,
+                productIssues: _productIssues,
+                agentPerformance: _agentPerformance,
+              ),
+              _AdminManagementDashboard(
+                compact: compact,
+                staffList: _staffList,
+                documentsList: _documentsList,
+                onAddStaff: _showAddStaffDialog,
+                onDeleteStaff: _deleteStaff,
+                onToggleStatus: _toggleStaffStatus,
+                onUploadDocument: _showUploadDocumentDialog,
+                onDeleteDocument: _deleteDocument,
+              ),
+            ],
+          ],
+        );
+
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: compact
+              ? _MobileHeader(
+                  role: _role,
+                  backendConnection: _backendConnection,
+                  onRoleChanged: _setDemoRole,
+                  onRefresh: refreshAll,
+                )
+              : null,
+          body: Column(
+            children: [
+              if (!compact)
+                _WebHeader(
+                  selectedIndex: _tabIndex,
+                  role: _role,
+                  onRoleChanged: _setDemoRole,
+                  onTabChanged: selectTab,
+                  onRefreshAll: refreshAll,
+                ),
+              _DemoGuideBanner(
+                tabIndex: _tabIndex,
+                compact: compact,
+                backendConnection: _backendConnection,
+                aiConnection: _aiConnection,
+                aiProvider: _aiProvider,
+              ),
+              Expanded(child: content),
+            ],
           ),
-        ],
-      ),
+          bottomNavigationBar: compact && navigationItems.length > 1
+              ? BottomNavigationBar(
+                  currentIndex: _tabIndex,
+                  onTap: selectTab,
+                  items: navigationItems,
+                )
+              : null,
+        );
+      },
     );
   }
 }
@@ -1177,11 +1566,15 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 class _WebHeader extends StatelessWidget {
   const _WebHeader({
     required this.selectedIndex,
+    required this.role,
+    required this.onRoleChanged,
     required this.onTabChanged,
     required this.onRefreshAll,
   });
 
   final int selectedIndex;
+  final DemoRole role;
+  final ValueChanged<DemoRole> onRoleChanged;
   final ValueChanged<int> onTabChanged;
   final VoidCallback onRefreshAll;
 
@@ -1232,7 +1625,7 @@ class _WebHeader extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      'Hệ Thống Quản Trị CSKH Đa Kênh',
+                      'Omnichannel Customer Support',
                       style: TextStyle(
                         color: AppColors.slate900,
                         fontSize: 17,
@@ -1249,7 +1642,7 @@ class _WebHeader extends StatelessWidget {
                 ),
                 SizedBox(height: 2),
                 Text(
-                  'Hỗ trợ khách hàng thời gian thực (Web Store & FB) • AI RAG Engine & Human Live Support',
+                  'Real-time customer support (Web Store & Facebook) • AI RAG Engine & Live Human Support',
                   style: TextStyle(
                     color: AppColors.slate500,
                     fontSize: 11,
@@ -1261,12 +1654,15 @@ class _WebHeader extends StatelessWidget {
           ),
           _SegmentedHeaderTabs(
             selectedIndex: selectedIndex,
+            showAdminTabs: role == DemoRole.superAdmin,
             onChanged: onTabChanged,
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 10),
+          _RoleMenu(role: role, onChanged: onRoleChanged),
+          const SizedBox(width: 6),
           IconButton.filledTonal(
             onPressed: onRefreshAll,
-            tooltip: 'Làm mới dữ liệu',
+            tooltip: 'Refresh data',
             icon: const Icon(Icons.refresh_rounded, size: 20),
           ),
         ],
@@ -1275,13 +1671,164 @@ class _WebHeader extends StatelessWidget {
   }
 }
 
+class _MobileHeader extends StatelessWidget implements PreferredSizeWidget {
+  const _MobileHeader({
+    required this.role,
+    required this.backendConnection,
+    required this.onRoleChanged,
+    required this.onRefresh,
+  });
+
+  final DemoRole role;
+  final ServiceConnection backendConnection;
+  final ValueChanged<DemoRole> onRoleChanged;
+  final VoidCallback onRefresh;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(64);
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = backendConnection == ServiceConnection.online;
+    return AppBar(
+      toolbarHeight: 64,
+      backgroundColor: Colors.white,
+      foregroundColor: AppColors.slate900,
+      titleSpacing: 16,
+      title: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.headset_mic_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Smart Helpdesk',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                ),
+                Text(
+                  connected ? 'Backend connected' : 'Offline demo mode',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: connected ? AppColors.success : AppColors.warning,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        _RoleMenu(role: role, onChanged: onRoleChanged, compact: true),
+        IconButton(
+          onPressed: onRefresh,
+          tooltip: 'Refresh',
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _RoleMenu extends StatelessWidget {
+  const _RoleMenu({
+    required this.role,
+    required this.onChanged,
+    this.compact = false,
+  });
+
+  final DemoRole role;
+  final ValueChanged<DemoRole> onChanged;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<DemoRole>(
+      tooltip: 'Switch demo role',
+      onSelected: onChanged,
+      itemBuilder: (context) => DemoRole.values
+          .map(
+            (item) => PopupMenuItem(
+              value: item,
+              child: Row(
+                children: [
+                  Icon(
+                    item == DemoRole.superAdmin
+                        ? Icons.admin_panel_settings_rounded
+                        : Icons.support_agent_rounded,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(item.label),
+                  if (item == role) ...[
+                    const Spacer(),
+                    const Icon(Icons.check_rounded, size: 18),
+                  ],
+                ],
+              ),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 10,
+          vertical: 8,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.slate100,
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: AppColors.slate200),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              role == DemoRole.superAdmin
+                  ? Icons.admin_panel_settings_rounded
+                  : Icons.support_agent_rounded,
+              size: 17,
+              color: AppColors.indigo,
+            ),
+            if (!compact) ...[
+              const SizedBox(width: 6),
+              Text(
+                role.label,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SegmentedHeaderTabs extends StatelessWidget {
   const _SegmentedHeaderTabs({
     required this.selectedIndex,
+    required this.showAdminTabs,
     required this.onChanged,
   });
 
   final int selectedIndex;
+  final bool showAdminTabs;
   final ValueChanged<int> onChanged;
 
   @override
@@ -1299,23 +1846,25 @@ class _SegmentedHeaderTabs extends StatelessWidget {
           _HeaderTabButton(
             selected: selectedIndex == 0,
             icon: Icons.forum_rounded,
-            label: '1. Live Chat & CSKH',
+            label: '1. Live Customer Support',
             onTap: () => onChanged(0),
           ),
-          const SizedBox(width: 4),
-          _HeaderTabButton(
-            selected: selectedIndex == 1,
-            icon: Icons.analytics_rounded,
-            label: '2. Báo Cáo & Doanh Số',
-            onTap: () => onChanged(1),
-          ),
-          const SizedBox(width: 4),
-          _HeaderTabButton(
-            selected: selectedIndex == 2,
-            icon: Icons.admin_panel_settings_rounded,
-            label: '3. Quản Lý & Tri Thức AI',
-            onTap: () => onChanged(2),
-          ),
+          if (showAdminTabs) ...[
+            const SizedBox(width: 4),
+            _HeaderTabButton(
+              selected: selectedIndex == 1,
+              icon: Icons.analytics_rounded,
+              label: '2. Reports & Revenue',
+              onTap: () => onChanged(1),
+            ),
+            const SizedBox(width: 4),
+            _HeaderTabButton(
+              selected: selectedIndex == 2,
+              icon: Icons.admin_panel_settings_rounded,
+              label: '3. Management & AI Knowledge',
+              onTap: () => onChanged(2),
+            ),
+          ],
         ],
       ),
     );
@@ -1370,56 +1919,80 @@ class _HeaderTabButton extends StatelessWidget {
 }
 
 class _DemoGuideBanner extends StatelessWidget {
-  const _DemoGuideBanner({required this.tabIndex});
+  const _DemoGuideBanner({
+    required this.tabIndex,
+    required this.compact,
+    required this.backendConnection,
+    required this.aiConnection,
+    required this.aiProvider,
+  });
 
   final int tabIndex;
+  final bool compact;
+  final ServiceConnection backendConnection;
+  final ServiceConnection aiConnection;
+  final String aiProvider;
 
   @override
   Widget build(BuildContext context) {
     String text;
     if (tabIndex == 0) {
       text =
-          'Đang ở Tab 1: Live Chat CSKH. Giao diện toàn màn hình, cuộn độc lập riêng trong khung chat, kết nối 2 chiều với Web Store (Port 3000).';
+          'Tab 1: Live Support. Full-screen workspace with independent chat scrolling and two-way Web Store messaging (port 3000).';
     } else if (tabIndex == 1) {
       text =
-          'Đang ở Tab 2: Báo cáo phân tích doanh thu và tỷ lệ tự động hóa do AI chốt đơn được cập nhật trực tiếp từ Database.';
+          'Tab 2: Revenue analytics and AI automation metrics updated directly from the database.';
     } else {
       text =
-          'Đang ở Tab 3: Trung tâm Quản Trị dành riêng cho Quản Lý — Quản lý nhân sự, phân quyền trực ca và nạp tri thức ChromaDB cho AI bot.';
+          'Tab 3: Manager workspace for agents, shift access, and AI knowledge uploads to ChromaDB.';
     }
+
+    final backendOnline = backendConnection == ServiceConnection.online;
+    final aiOnline = aiConnection == ServiceConnection.online;
+    final syncLabel = !backendOnline
+        ? 'BUILT-IN DEMO DATA'
+        : (supabaseRealtimeEnabled
+              ? 'REALTIME CONNECTED'
+              : 'REST POLLING CONNECTED');
+    final syncColor = backendOnline ? AppColors.success : AppColors.warning;
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 7),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 24, vertical: 7),
       decoration: const BoxDecoration(
         color: AppColors.primarySoft,
         border: Border(bottom: BorderSide(color: Color(0xFFDBEAFE))),
       ),
       child: Row(
         children: [
-          const BadgeChip(
-            label: 'HỆ THỐNG TRỰC TUYẾN',
+          BadgeChip(
+            label: aiOnline && aiProvider == 'ollama'
+                ? 'LOCAL AI • OLLAMA'
+                : (aiOnline ? 'AI FALLBACK READY' : 'AI OFFLINE'),
             color: Colors.white,
-            backgroundColor: AppColors.primary,
+            backgroundColor: aiOnline ? AppColors.primary : AppColors.warning,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: AppColors.slate800,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
+          if (!compact) ...[
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '$text ${kIsWeb ? "Web" : "Mobile"}: ${AppConfig.apiBaseUrl}',
+                style: const TextStyle(
+                  color: AppColors.slate800,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
-          const Icon(Icons.circle, color: AppColors.success, size: 8),
+          ] else
+            const Spacer(),
+          Icon(Icons.circle, color: syncColor, size: 8),
           const SizedBox(width: 6),
-          const Text(
-            'Supabase Realtime Đang Đồng Bộ',
+          Text(
+            syncLabel,
             style: TextStyle(
-              color: AppColors.success,
-              fontSize: 11,
+              color: syncColor,
+              fontSize: compact ? 9.5 : 11,
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -1432,6 +2005,8 @@ class _DemoGuideBanner extends StatelessWidget {
 // ── Tab 0: Không Gian Live Chat & Customer Profile (Full Height, Independent Scroll) ──
 class _LiveWorkspaceLayout extends StatelessWidget {
   const _LiveWorkspaceLayout({
+    required this.compact,
+    required this.showConversation,
     required this.tickets,
     required this.selectedTicket,
     required this.channelFilter,
@@ -1442,16 +2017,20 @@ class _LiveWorkspaceLayout extends StatelessWidget {
     required this.chatScrollController,
     required this.aiSuggestions,
     required this.isLoadingSuggestions,
+    required this.onBackToTickets,
     required this.onSelectTicket,
     required this.onChannelFilter,
     required this.onStatusFilter,
     required this.onToggleTakeover,
     required this.onResolveTicket,
+    required this.onDeleteConversation,
     required this.onUpdateStatus,
     required this.onFillDraft,
     required this.onSendReply,
   });
 
+  final bool compact;
+  final bool showConversation;
   final List<SupportTicket> tickets;
   final SupportTicket selectedTicket;
   final TicketSource? channelFilter;
@@ -1462,11 +2041,13 @@ class _LiveWorkspaceLayout extends StatelessWidget {
   final ScrollController chatScrollController;
   final List<String> aiSuggestions;
   final bool isLoadingSuggestions;
+  final VoidCallback onBackToTickets;
   final ValueChanged<SupportTicket> onSelectTicket;
   final ValueChanged<TicketSource?> onChannelFilter;
   final ValueChanged<TicketStatus?> onStatusFilter;
   final VoidCallback onToggleTakeover;
   final VoidCallback onResolveTicket;
+  final VoidCallback onDeleteConversation;
   final ValueChanged<String> onUpdateStatus;
   final ValueChanged<String> onFillDraft;
   final VoidCallback onSendReply;
@@ -1479,58 +2060,107 @@ class _LiveWorkspaceLayout extends StatelessWidget {
       return true;
     }).toList();
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Cột 1 (310px): Hộp thư đa kênh & Bộ lọc kênh + trạng thái
-          SizedBox(
-            width: 310,
-            child: _ConversationPanel(
-              tickets: visibleTickets,
-              allTickets: tickets,
-              selectedTicket: selectedTicket,
-              channelFilter: channelFilter,
-              statusFilter: statusFilter,
-              onChannelFilter: onChannelFilter,
-              onStatusFilter: onStatusFilter,
-              onSelectTicket: onSelectTicket,
-            ),
-          ),
-          const SizedBox(width: 14),
+    final ticketList = _ConversationPanel(
+      tickets: visibleTickets,
+      allTickets: tickets,
+      selectedTicket: selectedTicket,
+      channelFilter: channelFilter,
+      statusFilter: statusFilter,
+      onChannelFilter: onChannelFilter,
+      onStatusFilter: onStatusFilter,
+      onSelectTicket: onSelectTicket,
+    );
+    final chat = _MainChatRoom(
+      compact: compact,
+      ticket: selectedTicket,
+      humanTakeover: humanTakeover,
+      messages: liveMessages,
+      replyController: replyController,
+      scrollController: chatScrollController,
+      aiSuggestions: aiSuggestions,
+      isLoadingSuggestions: isLoadingSuggestions,
+      onToggleTakeover: onToggleTakeover,
+      onResolveTicket: onResolveTicket,
+      onDeleteConversation: onDeleteConversation,
+      onFillDraft: onFillDraft,
+      onSendReply: onSendReply,
+    );
+    final profile = _CustomerProfileSidebar(
+      ticket: selectedTicket,
+      humanTakeover: humanTakeover,
+      onToggleTakeover: onToggleTakeover,
+      onUpdateStatus: onUpdateStatus,
+    );
 
-          // Cột 2 (Flex chính): Khung Live Chat 2 Chiều (Cuộn độc lập, không lan ra trang)
-          Expanded(
-            flex: 6,
-            child: _MainChatRoom(
-              ticket: selectedTicket,
-              humanTakeover: humanTakeover,
-              messages: liveMessages,
-              replyController: replyController,
-              scrollController: chatScrollController,
-              aiSuggestions: aiSuggestions,
-              isLoadingSuggestions: isLoadingSuggestions,
-              onToggleTakeover: onToggleTakeover,
-              onResolveTicket: onResolveTicket,
-              onFillDraft: onFillDraft,
-              onSendReply: onSendReply,
+    if (compact) {
+      if (!showConversation) {
+        return Padding(padding: const EdgeInsets.all(10), child: ticketList);
+      }
+      return Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: onBackToTickets,
+                      icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                      label: const Text('Conversations'),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => showModalBottomSheet<void>(
+                        context: context,
+                        isScrollControlled: true,
+                        builder: (context) => SafeArea(
+                          child: SizedBox(
+                            height: MediaQuery.sizeOf(context).height * 0.72,
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: profile,
+                            ),
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.person_outline_rounded, size: 18),
+                      label: const Text('Customer'),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 14),
+            Expanded(child: chat),
+          ],
+        ),
+      );
+    }
 
-          // Cột 3 (330px): Hồ Sơ Khách Hàng & Thông Tin Ticket (Customer Profile CRM)
-          SizedBox(
-            width: 330,
-            child: _CustomerProfileSidebar(
-              ticket: selectedTicket,
-              humanTakeover: humanTakeover,
-              onToggleTakeover: onToggleTakeover,
-              onUpdateStatus: onUpdateStatus,
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showProfile = constraints.maxWidth >= 1180;
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: 310, child: ticketList),
+              const SizedBox(width: 14),
+              Expanded(flex: 6, child: chat),
+              if (showProfile) ...[
+                const SizedBox(width: 14),
+                SizedBox(width: 330, child: profile),
+              ],
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1579,7 +2209,7 @@ class _ConversationPanel extends StatelessWidget {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'HỘP THƯ HỢP NHẤT',
+                    'UNIFIED INBOX',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -1611,7 +2241,7 @@ class _ConversationPanel extends StatelessWidget {
               runSpacing: 4,
               children: [
                 _MiniFilterChip(
-                  label: 'Tất cả kênh',
+                  label: 'All channels',
                   selected: channelFilter == null,
                   color: AppColors.slate700,
                   onTap: () => onChannelFilter(null),
@@ -1648,28 +2278,28 @@ class _ConversationPanel extends StatelessWidget {
               runSpacing: 4,
               children: [
                 _MiniFilterChip(
-                  label: 'Tất cả TT',
+                  label: 'All statuses',
                   selected: statusFilter == null,
                   color: AppColors.slate600,
                   onTap: () => onStatusFilter(null),
                 ),
                 _MiniFilterChip(
                   label:
-                      'Chờ XL (${allTickets.where((t) => t.status == TicketStatus.open).length})',
+                      'Open (${allTickets.where((t) => t.status == TicketStatus.open).length})',
                   selected: statusFilter == TicketStatus.open,
                   color: AppColors.danger,
                   onTap: () => onStatusFilter(TicketStatus.open),
                 ),
                 _MiniFilterChip(
                   label:
-                      'Đang TV (${allTickets.where((t) => t.status == TicketStatus.inProgress).length})',
+                      'In progress (${allTickets.where((t) => t.status == TicketStatus.inProgress).length})',
                   selected: statusFilter == TicketStatus.inProgress,
                   color: AppColors.warning,
                   onTap: () => onStatusFilter(TicketStatus.inProgress),
                 ),
                 _MiniFilterChip(
                   label:
-                      'Xong (${allTickets.where((t) => t.status == TicketStatus.resolved).length})',
+                      'Resolved (${allTickets.where((t) => t.status == TicketStatus.resolved).length})',
                   selected: statusFilter == TicketStatus.resolved,
                   color: AppColors.success,
                   onTap: () => onStatusFilter(TicketStatus.resolved),
@@ -1827,6 +2457,7 @@ class _TicketListItem extends StatelessWidget {
 // ── Cột 2: Main Chat Room (Tách biệt hoàn toàn việc cuộn) ───────────────────
 class _MainChatRoom extends StatelessWidget {
   const _MainChatRoom({
+    required this.compact,
     required this.ticket,
     required this.humanTakeover,
     required this.messages,
@@ -1836,10 +2467,12 @@ class _MainChatRoom extends StatelessWidget {
     required this.isLoadingSuggestions,
     required this.onToggleTakeover,
     required this.onResolveTicket,
+    required this.onDeleteConversation,
     required this.onFillDraft,
     required this.onSendReply,
   });
 
+  final bool compact;
   final SupportTicket ticket;
   final bool humanTakeover;
   final List<TicketMessage> messages;
@@ -1849,6 +2482,7 @@ class _MainChatRoom extends StatelessWidget {
   final bool isLoadingSuggestions;
   final VoidCallback onToggleTakeover;
   final VoidCallback onResolveTicket;
+  final VoidCallback onDeleteConversation;
   final ValueChanged<String> onFillDraft;
   final VoidCallback onSendReply;
 
@@ -1859,85 +2493,13 @@ class _MainChatRoom extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          // Header Chat
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            color: AppColors.slate50,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
-                            'Ticket #${ticket.number}: ${ticket.customerName}',
-                            style: const TextStyle(
-                              color: AppColors.slate900,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SourceBadge(source: ticket.source),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        humanTakeover
-                            ? 'Trạng thái: NHÂN VIÊN ĐANG TRỰC TIẾP TƯ VẤN (HUMAN TAKEOVER)'
-                            : 'Trạng thái: AI TRỢ LÝ TỰ ĐỘNG GIẢI ĐÁP (24/7 AUTO SUPPORT)',
-                        style: TextStyle(
-                          color: humanTakeover
-                              ? AppColors.warning
-                              : AppColors.success,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onToggleTakeover,
-                  icon: Icon(
-                    humanTakeover ? Icons.person_pin : Icons.smart_toy_outlined,
-                    size: 16,
-                  ),
-                  label: Text(
-                    humanTakeover
-                        ? 'Nhân Viên Đang Trực'
-                        : 'Bật Tiếp Quản Trực',
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: humanTakeover
-                        ? AppColors.warning
-                        : AppColors.primary,
-                    side: BorderSide(
-                      color: humanTakeover
-                          ? AppColors.warning
-                          : AppColors.primary,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: onResolveTicket,
-                  icon: const Icon(Icons.check_circle_rounded, size: 16),
-                  label: const Text('Hoàn Tất & Đóng'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.success,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          _ChatRoomHeader(
+            ticket: ticket,
+            humanTakeover: humanTakeover,
+            compact: compact,
+            onToggleTakeover: onToggleTakeover,
+            onResolveTicket: onResolveTicket,
+            onDeleteConversation: onDeleteConversation,
           ),
           const Divider(height: 1, color: AppColors.slate200),
 
@@ -1948,7 +2510,7 @@ class _MainChatRoom extends StatelessWidget {
               child: messages.isEmpty
                   ? const Center(
                       child: Text(
-                        'Chưa có tin nhắn nào trong hội thoại này.',
+                        'There are no messages in this conversation yet.',
                         style: TextStyle(color: AppColors.slate400),
                       ),
                     )
@@ -1978,6 +2540,124 @@ class _MainChatRoom extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ChatRoomHeader extends StatelessWidget {
+  const _ChatRoomHeader({
+    required this.ticket,
+    required this.humanTakeover,
+    required this.compact,
+    required this.onToggleTakeover,
+    required this.onResolveTicket,
+    required this.onDeleteConversation,
+  });
+
+  final SupportTicket ticket;
+  final bool humanTakeover;
+  final bool compact;
+  final VoidCallback onToggleTakeover;
+  final VoidCallback onResolveTicket;
+  final VoidCallback onDeleteConversation;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Ticket #${ticket.number}: ${ticket.customerName}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppColors.slate900,
+              fontSize: compact ? 13 : 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        SourceBadge(source: ticket.source),
+      ],
+    );
+    final takeoverButton = OutlinedButton.icon(
+      onPressed: onToggleTakeover,
+      icon: Icon(
+        humanTakeover ? Icons.person_pin : Icons.smart_toy_outlined,
+        size: 15,
+      ),
+      label: Text(
+        compact
+            ? (humanTakeover ? 'Agent active' : 'Take over')
+            : (humanTakeover ? 'Human Agent Active' : 'Start Human Takeover'),
+      ),
+    );
+    final resolveButton = FilledButton.icon(
+      onPressed: onResolveTicket,
+      icon: const Icon(Icons.check_circle_rounded, size: 15),
+      label: Text(compact ? 'Resolve' : 'Resolve & Close'),
+      style: FilledButton.styleFrom(backgroundColor: AppColors.success),
+    );
+    final deleteButton = FilledButton.icon(
+      onPressed: onDeleteConversation,
+      icon: const Icon(Icons.delete_outline_rounded, size: 15),
+      label: Text(compact ? 'Delete' : 'Delete Chat'),
+      style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+    );
+    final completionButton = ticket.status == TicketStatus.resolved
+        ? deleteButton
+        : resolveButton;
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 12 : 18,
+        vertical: compact ? 9 : 12,
+      ),
+      color: AppColors.slate50,
+      child: compact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                title,
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(child: takeoverButton),
+                    const SizedBox(width: 8),
+                    Expanded(child: completionButton),
+                  ],
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      title,
+                      const SizedBox(height: 3),
+                      Text(
+                        humanTakeover
+                            ? 'STATUS: LIVE HUMAN SUPPORT'
+                            : 'STATUS: AI ASSISTANT ACTIVE',
+                        style: TextStyle(
+                          color: humanTakeover
+                              ? AppColors.warning
+                              : AppColors.success,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                takeoverButton,
+                const SizedBox(width: 8),
+                completionButton,
+              ],
+            ),
     );
   }
 }
@@ -2017,7 +2697,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
                 ),
                 SizedBox(width: 8),
                 Text(
-                  'HỒ SƠ KHÁCH HÀNG & CRM',
+                  'CUSTOMER PROFILE & CRM',
                   style: TextStyle(
                     color: AppColors.slate900,
                     fontSize: 12,
@@ -2068,7 +2748,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const Text(
-                              'Khách hàng tiềm năng (Online)',
+                              'Potential customer (Online)',
                               style: TextStyle(
                                 color: AppColors.slate500,
                                 fontSize: 10.5,
@@ -2083,22 +2763,22 @@ class _CustomerProfileSidebar extends StatelessWidget {
 
                   // Metadata Cards
                   _ProfileDetailItem(
-                    label: 'Kênh Liên Hệ',
+                    label: 'Contact Channel',
                     value: ticket.source.label,
                     icon: ticket.source.icon,
                   ),
                   _ProfileDetailItem(
-                    label: 'Ý Định Phân Loại',
+                    label: 'Classified Intent',
                     value: ticket.intent.label,
                     icon: ticket.intent.icon,
                   ),
                   _ProfileDetailItem(
-                    label: 'Trạng Thái Ticket',
+                    label: 'Ticket Status',
                     value: ticket.status.label,
                     icon: Icons.flag_rounded,
                   ),
                   _ProfileDetailItem(
-                    label: 'Mã Phiên Chat',
+                    label: 'Chat Session ID',
                     value: '#${ticket.number}',
                     icon: Icons.tag_rounded,
                   ),
@@ -2108,7 +2788,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
                   const SizedBox(height: 8),
 
                   const Text(
-                    'Tóm Tắt Yêu Cầu Của Khách:',
+                    'CUSTOMER REQUEST SUMMARY:',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
@@ -2136,7 +2816,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
 
                   const SizedBox(height: 14),
                   const Text(
-                    'Thao Tác Nhanh Trạng Thái:',
+                    'QUICK STATUS ACTIONS:',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
@@ -2160,7 +2840,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        child: const Text('Chờ Xử Lý'),
+                        child: const Text('Open'),
                       ),
                       OutlinedButton(
                         onPressed: () => onUpdateStatus('in_progress'),
@@ -2174,7 +2854,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        child: const Text('Đang Tư Vấn'),
+                        child: const Text('In Progress'),
                       ),
                       FilledButton(
                         onPressed: () => onUpdateStatus('resolved'),
@@ -2189,7 +2869,7 @@ class _CustomerProfileSidebar extends StatelessWidget {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        child: const Text('Đã Hoàn Tất'),
+                        child: const Text('Resolved'),
                       ),
                     ],
                   ),
@@ -2268,8 +2948,9 @@ class _WebReplyComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 720;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(compact ? 8 : 12),
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border(top: BorderSide(color: AppColors.slate200)),
@@ -2295,12 +2976,18 @@ class _WebReplyComposer extends StatelessWidget {
                       color: AppColors.primary,
                     ),
                     const SizedBox(width: 6),
-                    const Text(
-                      'AI Copilot Gợi Ý Trả Lời Nhanh (Click để chèn vào khung soạn thảo):',
-                      style: TextStyle(
-                        color: AppColors.slate900,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
+                    Expanded(
+                      child: Text(
+                        compact
+                            ? 'AI Copilot reply suggestions'
+                            : 'AI COPILOT QUICK REPLIES (click to insert):',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.slate900,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
                     if (isLoadingSuggestions) ...[
@@ -2316,8 +3003,27 @@ class _WebReplyComposer extends StatelessWidget {
                 const SizedBox(height: 8),
                 if (aiSuggestions.isEmpty)
                   const Text(
-                    'Đang phân tích tin nhắn để đưa ra gợi ý tối ưu...',
+                    'Analyzing the conversation for the best reply...',
                     style: TextStyle(fontSize: 11, color: AppColors.slate500),
+                  )
+                else if (compact)
+                  SizedBox(
+                    height: 36,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: aiSuggestions.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(width: 7),
+                      itemBuilder: (context, index) {
+                        final suggestion = aiSuggestions[index];
+                        return _DraftButton(
+                          label: suggestion.length > 42
+                              ? '${suggestion.substring(0, 39)}...'
+                              : suggestion,
+                          onTap: () => onFillDraft(suggestion),
+                        );
+                      },
+                    ),
                   )
                 else
                   Wrap(
@@ -2344,7 +3050,7 @@ class _WebReplyComposer extends StatelessWidget {
                   onSubmitted: (_) => onSend(),
                   decoration: InputDecoration(
                     hintText:
-                        'Nhập câu trả lời của nhân viên để gửi trực tiếp về Web Store...',
+                        'Write an agent reply to send directly to the Web Store...',
                     filled: true,
                     fillColor: Colors.white,
                     contentPadding: const EdgeInsets.symmetric(
@@ -2365,9 +3071,9 @@ class _WebReplyComposer extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onSend,
                 icon: const Icon(Icons.send_rounded, size: 17),
-                label: const Text('Gửi Trực Tiếp'),
+                label: Text(compact ? 'Send' : 'Send Reply'),
                 style: FilledButton.styleFrom(
-                  minimumSize: const Size(120, 48),
+                  minimumSize: Size(compact ? 72 : 120, 48),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -2407,11 +3113,13 @@ class _DraftButton extends StatelessWidget {
 // ── Tab 1: Executive Analytics Dashboard (100% Real Stats) ───────────────────
 class _AnalyticsDashboard extends StatelessWidget {
   const _AnalyticsDashboard({
+    required this.compact,
     required this.stats,
     required this.productIssues,
     required this.agentPerformance,
   });
 
+  final bool compact;
   final Map<String, dynamic> stats;
   final Map<String, dynamic> productIssues;
   final Map<String, dynamic> agentPerformance;
@@ -2421,12 +3129,26 @@ class _AnalyticsDashboard extends StatelessWidget {
     final total = stats['total_tickets'] ?? 4;
     final resolved = stats['resolved_tickets'] ?? 1;
     final aiPercent = stats['ai_handled_percent'] ?? 91.5;
-    final savedSalary = stats['saved_salary'] ?? '8.500.000đ/tháng';
-    final estimatedRev = stats['estimated_revenue'] ?? '15.800.000đ';
+    final savedSalary = stats['saved_salary'] ?? '8,500,000 VND/month';
+    final estimatedRev = stats['estimated_revenue'] ?? '15,800,000 VND';
     final channels = stats['channels'] as Map<String, dynamic>? ?? {};
     final webCount = channels['web'] ?? total;
     final fbCount = channels['facebook'] ?? 0;
     final emailCount = channels['email'] ?? 0;
+
+    if (compact) {
+      return _CompactAnalyticsDashboard(
+        total: total,
+        resolved: resolved,
+        aiPercent: aiPercent,
+        savedSalary: savedSalary.toString(),
+        estimatedRevenue: estimatedRev.toString(),
+        webCount: webCount,
+        facebookCount: fbCount,
+        emailCount: emailCount,
+        productIssues: productIssues,
+      );
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -2437,12 +3159,12 @@ class _AnalyticsDashboard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Báo Cáo Hiệu Suất CSKH & Doanh Thu (Executive Analytics)',
+                'Customer Support & Revenue Performance (Executive Analytics)',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 4),
               const Text(
-                'Tổng hợp chỉ số kinh doanh và tỷ lệ tự động hóa qua AI của SportGear Boutique',
+                'SportGear Boutique business metrics and AI automation overview',
                 style: TextStyle(color: AppColors.slate500, fontSize: 13),
               ),
               const SizedBox(height: 20),
@@ -2451,9 +3173,9 @@ class _AnalyticsDashboard extends StatelessWidget {
                   Expanded(
                     child: _OwnerMetricCard(
                       icon: Icons.savings_outlined,
-                      label: 'Tiền Lương Tiết Kiệm',
+                      label: 'Payroll Savings',
                       value: savedSalary,
-                      note: 'Tiết kiệm 120h trực ca của nhân viên',
+                      note: '120 agent-hours saved',
                       color: AppColors.success,
                     ),
                   ),
@@ -2461,9 +3183,9 @@ class _AnalyticsDashboard extends StatelessWidget {
                   Expanded(
                     child: _OwnerMetricCard(
                       icon: Icons.shopping_bag_outlined,
-                      label: 'Doanh Số AI Hỗ Trợ Chốt',
+                      label: 'AI-Assisted Revenue',
                       value: estimatedRev,
-                      note: '$total khách hàng tư vấn & chốt đơn',
+                      note: '$total customers supported and converted',
                       color: AppColors.primary,
                     ),
                   ),
@@ -2471,9 +3193,9 @@ class _AnalyticsDashboard extends StatelessWidget {
                   const Expanded(
                     child: _OwnerMetricCard(
                       icon: Icons.bolt_rounded,
-                      label: 'Thời Gian Trả Lời TB',
-                      value: '< 0.4 giây',
-                      note: 'Tự động 24/7 không cần chờ đợi',
+                      label: 'Average Response Time',
+                      value: '< 0.4 seconds',
+                      note: 'Automated 24/7 with no queue',
                       color: AppColors.indigo,
                     ),
                   ),
@@ -2481,9 +3203,9 @@ class _AnalyticsDashboard extends StatelessWidget {
                   const Expanded(
                     child: _OwnerMetricCard(
                       icon: Icons.star_rounded,
-                      label: 'Đánh Giá Hài Lòng',
+                      label: 'Customer Satisfaction',
                       value: '4.9 / 5.0',
-                      note: '154 khách hàng đánh giá 5 sao',
+                      note: '154 five-star customer ratings',
                       color: AppColors.warning,
                     ),
                   ),
@@ -2502,7 +3224,7 @@ class _AnalyticsDashboard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Phân Bổ Kênh Giao Tiếp Khách Hàng',
+                            'Customer Contact Channels',
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w900,
@@ -2522,7 +3244,7 @@ class _AnalyticsDashboard extends StatelessWidget {
                           ),
                           const SizedBox(height: 10),
                           _ChannelStatRow(
-                            label: 'Email Chăm Sóc Khách Hàng',
+                            label: 'Customer Support Email',
                             percent: total > 0 ? (emailCount / total) : 0.1,
                             count: '$emailCount tickets',
                           ),
@@ -2540,7 +3262,7 @@ class _AnalyticsDashboard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text(
-                            'Chỉ Số Vận Hành AI & Human Support',
+                            'AI & Human Support Operations',
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w900,
@@ -2548,20 +3270,19 @@ class _AnalyticsDashboard extends StatelessWidget {
                           ),
                           const SizedBox(height: 14),
                           _DetailMetricRow(
-                            title: 'Tỷ lệ AI tự động giải quyết',
+                            title: 'AI automatic resolution rate',
                             value: '$aiPercent%',
                           ),
                           _DetailMetricRow(
-                            title: 'Tỷ lệ Chuyển Nhân Viên Trực (Handoff)',
+                            title: 'Human handoff rate',
                             value: '${(100 - aiPercent).toStringAsFixed(1)}%',
                           ),
                           _DetailMetricRow(
-                            title: 'Tổng số Ticket đã xử lý thành công',
+                            title: 'Tickets resolved successfully',
                             value: '$resolved / $total tickets',
                           ),
                           const _DetailMetricRow(
-                            title:
-                                'Tỷ lệ giải quyết khiếu nại (Resolution Rate)',
+                            title: 'Complaint resolution rate',
                             value: '100%',
                           ),
                         ],
@@ -2617,12 +3338,12 @@ class _ProductIssuesSection extends StatelessWidget {
               ),
               SizedBox(width: 8),
               Text(
-                'Sản Phẩm Bị Báo Lỗi Nhiều Nhất (Phân Tích Từ Dữ Liệu Thực)',
+                'Most Reported Products (Live Data Analysis)',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
               SizedBox(width: 8),
               BadgeChip(
-                label: 'THỜI GIAN THỰC',
+                label: 'LIVE',
                 color: AppColors.danger,
                 backgroundColor: AppColors.dangerSoft,
               ),
@@ -2630,7 +3351,7 @@ class _ProductIssuesSection extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Dựa trên phân tích NLP từ nội dung chat của khách hàng — cập nhật theo từng ticket mới',
+            'Based on NLP analysis of customer conversations and updated with every new ticket',
             style: TextStyle(color: AppColors.slate500, fontSize: 12),
           ),
           const SizedBox(height: 16),
@@ -2638,14 +3359,14 @@ class _ProductIssuesSection extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 14),
               child: Text(
-                'Chưa có dữ liệu khiếu nại sản phẩm. Dashboard vẫn sẵn sàng hiển thị khi có ticket mới.',
+                'No product complaints yet. New ticket data will appear here automatically.',
                 style: TextStyle(color: AppColors.slate500, fontSize: 12),
               ),
             ),
           ...topIssues.asMap().entries.map((entry) {
             final idx = entry.key;
             final item = entry.value;
-            final product = item['product']?.toString() ?? 'Sản phẩm';
+            final product = item['product']?.toString() ?? 'Product';
             final count = (item['complaint_count'] as num?)?.toInt() ?? 0;
             final issues = (item['top_issues'] as List?)?.cast<String>() ?? [];
             final maxCount =
@@ -2700,7 +3421,7 @@ class _ProductIssuesSection extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              '$count khiếu nại',
+                              '$count complaints',
                               style: TextStyle(
                                 fontWeight: FontWeight.w900,
                                 fontSize: 12,
@@ -2792,12 +3513,12 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
               Icon(Icons.psychology_rounded, color: AppColors.indigo, size: 20),
               SizedBox(width: 8),
               Text(
-                'Khoảng Trống Tri Thức AI (Những Gì AI Chưa Được Học)',
+                'AI Knowledge Gaps',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
               ),
               SizedBox(width: 8),
               BadgeChip(
-                label: 'CẦN BỔ SUNG TÀI LIỆU',
+                label: 'DOCUMENTATION NEEDED',
                 color: AppColors.indigo,
                 backgroundColor: AppColors.indigoSoft,
               ),
@@ -2805,7 +3526,7 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Các chủ đề khách hàng hỏi nhưng AI chưa có đủ kiến thức trả lời — Quản lý cần nạp thêm tài liệu tại Tab 3',
+            'Topics the AI cannot answer confidently. Managers can add supporting documents in Tab 3.',
             style: TextStyle(color: AppColors.slate500, fontSize: 12),
           ),
           const SizedBox(height: 16),
@@ -2813,12 +3534,12 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 14),
               child: Text(
-                'Chưa phát hiện khoảng trống tri thức mới. Tài liệu SportGear hiện đủ cho luồng demo.',
+                'No new knowledge gaps detected. Current SportGear documents cover the demo flows.',
                 style: TextStyle(color: AppColors.slate500, fontSize: 12),
               ),
             ),
           ...gaps.map((gap) {
-            final topic = gap['topic']?.toString() ?? 'Chủ đề';
+            final topic = gap['topic']?.toString() ?? 'Topic';
             final count = (gap['query_count'] as num?)?.toInt() ?? 0;
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -2849,7 +3570,7 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      '$count câu hỏi chưa trả lời tốt',
+                      '$count questions need better answers',
                       style: const TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w800,
@@ -2882,7 +3603,7 @@ class _AgentPerformanceSection extends StatelessWidget {
         185;
     final ratio =
         agentPerformance['ai_vs_human_ratio']?.toString() ??
-        '91.5% AI / 8.5% Nhân Viên';
+        '91.5% AI / 8.5% Human';
     final totalTickets =
         (agentPerformance['total_tickets'] as num?)?.toInt() ?? 0;
     final resolvedTickets =
@@ -2911,7 +3632,7 @@ class _AgentPerformanceSection extends StatelessWidget {
             Icon(Icons.speed_rounded, color: AppColors.success, size: 20),
             SizedBox(width: 8),
             Text(
-              'Hiệu Suất Phản Hồi: AI Bot vs Nhân Viên CSKH',
+              'Response Performance: AI Bot vs Human Agents',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
           ],
@@ -2921,9 +3642,9 @@ class _AgentPerformanceSection extends StatelessWidget {
           children: [
             Expanded(
               child: _MetricCompareCard(
-                label: '⚡ AI Bot Trả Lời Trung Bình',
+                label: '⚡ Average AI Response',
                 value: botLabel,
-                note: 'Phản hồi tức thì, hoạt động 24/7',
+                note: 'Instant responses, available 24/7',
                 color: AppColors.primary,
                 icon: Icons.smart_toy_rounded,
               ),
@@ -2931,9 +3652,9 @@ class _AgentPerformanceSection extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: _MetricCompareCard(
-                label: '👨‍💼 Nhân Viên Trả Lời Trung Bình',
-                value: '${humanMin} phút',
-                note: 'Trên các ticket cần handoff thực tế',
+                label: '👨‍💼 Average Human Response',
+                value: '$humanMin minutes',
+                note: 'For tickets that require a live handoff',
                 color: AppColors.indigo,
                 icon: Icons.support_agent_rounded,
               ),
@@ -2941,7 +3662,7 @@ class _AgentPerformanceSection extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: _MetricCompareCard(
-                label: '📊 Phân Bổ AI / Nhân Viên',
+                label: '📊 AI / Human Distribution',
                 value: ratio.split('/').first.trim(),
                 note: ratio,
                 color: AppColors.success,
@@ -2951,9 +3672,9 @@ class _AgentPerformanceSection extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: _MetricCompareCard(
-                label: '✅ Tỷ Lệ Giải Quyết Thành Công',
+                label: '✅ Successful Resolution Rate',
                 value: '$resolutionRate%',
-                note: '$resolvedTickets / $totalTickets tickets đã đóng',
+                note: '$resolvedTickets / $totalTickets tickets closed',
                 color: AppColors.warning,
                 icon: Icons.check_circle_rounded,
               ),
@@ -2969,12 +3690,12 @@ class _AgentPerformanceSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Phân Bổ Ticket Theo Khung Giờ Trong Ngày',
+                  'Ticket Volume by Time of Day',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Giúp lên lịch trực ca nhân viên tối ưu theo giờ cao điểm',
+                  'Use peak-hour data to optimize agent schedules',
                   style: TextStyle(fontSize: 11, color: AppColors.slate500),
                 ),
                 const SizedBox(height: 14),
@@ -3050,7 +3771,7 @@ class _AgentPerformanceSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Top Nhân Viên CSKH Hiệu Suất Cao Nhất',
+                  'Top-Performing Support Agents',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 12),
@@ -3085,7 +3806,7 @@ class _AgentPerformanceSection extends StatelessWidget {
                         ),
                         _DetailMetricRow(
                           title: '${agent["tickets_handled"]} tickets',
-                          value: '${agent["avg_response_min"]} phút/ticket',
+                          value: '${agent["avg_response_min"]} min/ticket',
                         ),
                       ],
                     ),
@@ -3158,6 +3879,202 @@ class _MetricCompareCard extends StatelessWidget {
   }
 }
 
+class _CompactAnalyticsDashboard extends StatelessWidget {
+  const _CompactAnalyticsDashboard({
+    required this.total,
+    required this.resolved,
+    required this.aiPercent,
+    required this.savedSalary,
+    required this.estimatedRevenue,
+    required this.webCount,
+    required this.facebookCount,
+    required this.emailCount,
+    required this.productIssues,
+  });
+
+  final dynamic total;
+  final dynamic resolved;
+  final dynamic aiPercent;
+  final String savedSalary;
+  final String estimatedRevenue;
+  final dynamic webCount;
+  final dynamic facebookCount;
+  final dynamic emailCount;
+  final Map<String, dynamic> productIssues;
+
+  @override
+  Widget build(BuildContext context) {
+    final issues = (productIssues['top_product_issues'] as List?) ?? const [];
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'Support Performance',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'A dashboard optimized for phone screens.',
+          style: TextStyle(color: AppColors.slate500, fontSize: 12),
+        ),
+        const SizedBox(height: 14),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: 1.35,
+          children: [
+            _CompactMetricCard(
+              label: 'Total tickets',
+              value: '$total',
+              icon: Icons.confirmation_number_outlined,
+              color: AppColors.primary,
+            ),
+            _CompactMetricCard(
+              label: 'Resolved',
+              value: '$resolved',
+              icon: Icons.task_alt_rounded,
+              color: AppColors.success,
+            ),
+            _CompactMetricCard(
+              label: 'AI handled',
+              value: '$aiPercent%',
+              icon: Icons.smart_toy_outlined,
+              color: AppColors.indigo,
+            ),
+            _CompactMetricCard(
+              label: 'Assisted revenue',
+              value: estimatedRevenue,
+              icon: Icons.shopping_bag_outlined,
+              color: AppColors.warning,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Support channels',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 10),
+              _CompactValueRow(label: 'Web Store', value: '$webCount tickets'),
+              _CompactValueRow(
+                label: 'Facebook',
+                value: '$facebookCount tickets',
+              ),
+              _CompactValueRow(label: 'Email', value: '$emailCount tickets'),
+              _CompactValueRow(label: 'Payroll savings', value: savedSalary),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Top product issues',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              if (issues.isEmpty)
+                const Text(
+                  'No complaint data yet.',
+                  style: TextStyle(color: AppColors.slate500),
+                )
+              else
+                ...issues.take(3).map((raw) {
+                  final issue = Map<String, dynamic>.from(raw as Map);
+                  return _CompactValueRow(
+                    label: issue['product']?.toString() ?? 'Product',
+                    value: '${issue['complaint_count'] ?? 0} reports',
+                  );
+                }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CompactMetricCard extends StatelessWidget {
+  const _CompactMetricCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: color, size: 22),
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          ),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppColors.slate500, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompactValueRow extends StatelessWidget {
+  const _CompactValueRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _OwnerMetricCard extends StatelessWidget {
   const _OwnerMetricCard({
     required this.icon,
@@ -3186,7 +4103,7 @@ class _OwnerMetricCard extends StatelessWidget {
               Icon(icon, color: color, size: 24),
               const Spacer(),
               BadgeChip(
-                label: 'THÁNG NÀY',
+                label: 'THIS MONTH',
                 color: color,
                 backgroundColor: color.withValues(alpha: 0.1),
               ),
@@ -3305,6 +4222,7 @@ class _DetailMetricRow extends StatelessWidget {
 // ── Tab 2: Quản Trị Hệ Thống: Nhân Sự + Bộ Tri Thức AI ChromaDB ──────────────
 class _AdminManagementDashboard extends StatelessWidget {
   const _AdminManagementDashboard({
+    required this.compact,
     required this.staffList,
     required this.documentsList,
     required this.onAddStaff,
@@ -3314,6 +4232,7 @@ class _AdminManagementDashboard extends StatelessWidget {
     required this.onDeleteDocument,
   });
 
+  final bool compact;
   final List<Map<String, dynamic>> staffList;
   final List<Map<String, dynamic>> documentsList;
   final VoidCallback onAddStaff;
@@ -3324,6 +4243,17 @@ class _AdminManagementDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return _CompactAdminDashboard(
+        staffList: staffList,
+        documentsList: documentsList,
+        onAddStaff: onAddStaff,
+        onDeleteStaff: onDeleteStaff,
+        onToggleStatus: onToggleStatus,
+        onUploadDocument: onUploadDocument,
+        onDeleteDocument: onDeleteDocument,
+      );
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
@@ -3340,7 +4270,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '1. Quản Trị Nhân Sự & Phân Quyền Trực Ca',
+                        '1. Agent Management & Shift Access',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
@@ -3348,7 +4278,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                       ),
                       SizedBox(height: 3),
                       Text(
-                        'Thêm mới, phân quyền và quản lý trạng thái trực tuyến của nhân viên tư vấn',
+                        'Add agents, assign roles, and manage online availability',
                         style: TextStyle(
                           color: AppColors.slate500,
                           fontSize: 12,
@@ -3359,7 +4289,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                   FilledButton.icon(
                     onPressed: onAddStaff,
                     icon: const Icon(Icons.person_add_rounded, size: 17),
-                    label: const Text('Thêm Nhân Viên Mới'),
+                    label: const Text('Add Agent'),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -3382,38 +4312,38 @@ class _AdminManagementDashboard extends StatelessWidget {
                   columns: const [
                     DataColumn(
                       label: Text(
-                        'Họ và Tên',
+                        'Full Name',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     DataColumn(
                       label: Text(
-                        'Email Đăng Nhập',
+                        'Login Email',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     DataColumn(
                       label: Text(
-                        'Vai Trò',
+                        'Role',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     DataColumn(
                       label: Text(
-                        'Trạng Thái Trực',
+                        'Availability',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     DataColumn(
                       label: Text(
-                        'Thao Tác',
+                        'Actions',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
                   rows: staffList.map((staff) {
                     final id = staff['id']?.toString() ?? '';
-                    final name = staff['full_name'] ?? 'Nhân viên';
+                    final name = staff['full_name'] ?? 'Agent';
                     final email = staff['email'] ?? '';
                     final role = staff['role'] ?? 'agent';
                     final status = staff['status'] ?? 'online';
@@ -3450,10 +4380,10 @@ class _AdminManagementDashboard extends StatelessWidget {
                         DataCell(
                           BadgeChip(
                             label: role == 'super_admin'
-                                ? 'CHỦ SHOP (SUPER ADMIN)'
+                                ? 'STORE OWNER (SUPER ADMIN)'
                                 : (role == 'senior_agent'
-                                      ? 'TRƯỞNG CA (SENIOR)'
-                                      : 'NHÂN VIÊN (AGENT)'),
+                                      ? 'SHIFT LEAD (SENIOR)'
+                                      : 'SUPPORT AGENT'),
                             color: role == 'super_admin'
                                 ? AppColors.danger
                                 : AppColors.primary,
@@ -3467,9 +4397,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                             onTap: () => onToggleStatus(id, status),
                             borderRadius: BorderRadius.circular(6),
                             child: BadgeChip(
-                              label: isOnline
-                                  ? 'ĐANG TRỰC ONLINE'
-                                  : 'ĐÃ NGHỈ CA (OFFLINE)',
+                              label: isOnline ? 'ONLINE' : 'OFFLINE',
                               color: isOnline
                                   ? AppColors.success
                                   : AppColors.slate500,
@@ -3489,7 +4417,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                               color: AppColors.danger,
                               size: 20,
                             ),
-                            tooltip: 'Xóa nhân viên',
+                            tooltip: 'Delete agent',
                             onPressed: () => onDeleteStaff(id, name),
                           ),
                         ),
@@ -3511,7 +4439,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                       Row(
                         children: [
                           Text(
-                            '2. Quản Lý Bộ Tri Thức AI Bot (ChromaDB Knowledge Base)',
+                            '2. AI Knowledge Base (ChromaDB)',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w900,
@@ -3519,7 +4447,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                           ),
                           SizedBox(width: 8),
                           BadgeChip(
-                            label: 'DÀNH RIÊNG QUẢN LÝ',
+                            label: 'MANAGERS ONLY',
                             color: AppColors.indigo,
                             backgroundColor: AppColors.indigoSoft,
                           ),
@@ -3527,7 +4455,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                       ),
                       SizedBox(height: 3),
                       Text(
-                        'Nạp tài liệu chính sách, sản phẩm, bảng giá để AI Bot tự động học và trả lời khách hàng 24/7',
+                        'Upload policies, product information, and pricing so the AI can answer customers 24/7',
                         style: TextStyle(
                           color: AppColors.slate500,
                           fontSize: 12,
@@ -3538,7 +4466,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                   FilledButton.icon(
                     onPressed: onUploadDocument,
                     icon: const Icon(Icons.cloud_upload_rounded, size: 17),
-                    label: const Text('Nạp Tài Liệu Mới Vào ChromaDB'),
+                    label: const Text('Upload Document to ChromaDB'),
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.indigo,
                       padding: const EdgeInsets.symmetric(
@@ -3570,7 +4498,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                         ),
                         SizedBox(width: 8),
                         Text(
-                          'Danh Sách Tài Liệu Đã Được Vector Indexing Trong ChromaDB:',
+                          'DOCUMENTS VECTOR-INDEXED IN CHROMADB:',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w900,
@@ -3584,7 +4512,7 @@ class _AdminManagementDashboard extends StatelessWidget {
                             padding: EdgeInsets.all(16),
                             child: Center(
                               child: Text(
-                                'Chưa có tài liệu nào.',
+                                'No documents yet.',
                                 style: TextStyle(color: AppColors.slate400),
                               ),
                             ),
@@ -3613,6 +4541,131 @@ class _AdminManagementDashboard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CompactAdminDashboard extends StatelessWidget {
+  const _CompactAdminDashboard({
+    required this.staffList,
+    required this.documentsList,
+    required this.onAddStaff,
+    required this.onDeleteStaff,
+    required this.onToggleStatus,
+    required this.onUploadDocument,
+    required this.onDeleteDocument,
+  });
+
+  final List<Map<String, dynamic>> staffList;
+  final List<Map<String, dynamic>> documentsList;
+  final VoidCallback onAddStaff;
+  final Function(String id, String name) onDeleteStaff;
+  final Function(String id, String currentStatus) onToggleStatus;
+  final VoidCallback onUploadDocument;
+  final Function(String id, String name) onDeleteDocument;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'System Management',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: onAddStaff,
+                icon: const Icon(Icons.person_add_rounded, size: 17),
+                label: const Text('Add agent'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: onUploadDocument,
+                icon: const Icon(Icons.upload_file_rounded, size: 17),
+                label: const Text('Add knowledge'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.indigo,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        const Text(
+          'Agents',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 8),
+        ...staffList.map((staff) {
+          final id = staff['id']?.toString() ?? '';
+          final name = staff['full_name']?.toString() ?? 'Agent';
+          final email = staff['email']?.toString() ?? '';
+          final status = staff['status']?.toString() ?? 'offline';
+          final online = status == 'online';
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: ListTile(
+              leading: CircleAvatar(child: Text(name.isEmpty ? 'N' : name[0])),
+              title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                '$email\n${online ? "Online" : "Offline"}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              isThreeLine: true,
+              onTap: () => onToggleStatus(id, status),
+              trailing: IconButton(
+                tooltip: 'Delete agent',
+                onPressed: () => onDeleteStaff(id, name),
+                icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+              ),
+            ),
+          );
+        }),
+        const SizedBox(height: 14),
+        const Text(
+          'AI Knowledge',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 8),
+        if (documentsList.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No documents yet.'),
+            ),
+          )
+        else
+          ...documentsList.map((document) {
+            final id = document['id']?.toString() ?? '';
+            final name = document['name']?.toString() ?? 'Document';
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                leading: const Icon(
+                  Icons.description_outlined,
+                  color: AppColors.indigo,
+                ),
+                title: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
+                subtitle: Text('${document['chunk_count'] ?? 0} vector chunks'),
+                trailing: IconButton(
+                  tooltip: 'Delete document',
+                  onPressed: () => onDeleteDocument(id, name),
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: AppColors.danger,
+                  ),
+                ),
+              ),
+            );
+          }),
+      ],
     );
   }
 }
@@ -3659,7 +4712,7 @@ class _AdminDocumentRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Số Vector Chunks: $chunks • Trạng thái: Sẵn sàng tra cứu RAG 24/7',
+                  'Vector chunks: $chunks • Status: Ready for 24/7 RAG retrieval',
                   style: const TextStyle(
                     color: AppColors.slate500,
                     fontSize: 10.5,
@@ -3670,7 +4723,7 @@ class _AdminDocumentRow extends StatelessWidget {
             ),
           ),
           const BadgeChip(
-            label: 'ĐÃ INDEX CHROMADB',
+            label: 'CHROMADB INDEXED',
             color: AppColors.success,
             backgroundColor: AppColors.successSoft,
           ),
@@ -3682,7 +4735,7 @@ class _AdminDocumentRow extends StatelessWidget {
               color: AppColors.danger,
             ),
             onPressed: onDelete,
-            tooltip: 'Xóa tài liệu khỏi ChromaDB',
+            tooltip: 'Delete document from ChromaDB',
           ),
         ],
       ),
@@ -3925,10 +4978,10 @@ enum TicketSource {
 }
 
 enum TicketStatus {
-  open('Chờ Xử Lý', AppColors.danger, AppColors.dangerSoft),
-  inProgress('Đang Tư Vấn', AppColors.warning, AppColors.warningSoft),
-  pending('Tạm Dừng', AppColors.warning, AppColors.warningSoft),
-  resolved('Đã Hoàn Tất', AppColors.success, AppColors.successSoft);
+  open('Open', AppColors.danger, AppColors.dangerSoft),
+  inProgress('In Progress', AppColors.warning, AppColors.warningSoft),
+  pending('Pending', AppColors.warning, AppColors.warningSoft),
+  resolved('Resolved', AppColors.success, AppColors.successSoft);
 
   const TicketStatus(this.label, this.color, this.softColor);
   final String label;
@@ -3938,13 +4991,13 @@ enum TicketStatus {
 
 enum TicketIntent {
   question(
-    'Tư Vấn FAQ',
+    'FAQ Support',
     Icons.help_outline_rounded,
     AppColors.primary,
     AppColors.primarySoft,
   ),
   complaint(
-    'Khiếu Nại / Đổi Trả',
+    'Complaint / Return',
     Icons.report_problem_rounded,
     AppColors.danger,
     AppColors.dangerSoft,
@@ -3959,9 +5012,9 @@ enum TicketIntent {
 }
 
 enum SenderType {
-  customer('Khách Hàng', Icons.person_rounded, AppColors.slate500),
+  customer('Customer', Icons.person_rounded, AppColors.slate500),
   bot('SportGear AI Assistant', Icons.smart_toy_rounded, AppColors.primary),
-  human('Chuyên Viên CSKH Live', Icons.support_agent_rounded, AppColors.indigo);
+  human('Live Support Agent', Icons.support_agent_rounded, AppColors.indigo);
 
   const SenderType(this.label, this.icon, this.color);
   final String label;
@@ -4063,101 +5116,101 @@ class AppColors {
 final List<SupportTicket> initialDemoTickets = [
   const SupportTicket(
     number: 102,
-    customerName: 'Khách Hàng Web (SportGear Store)',
+    customerName: 'Web Customer (SportGear Store)',
     source: TicketSource.web,
     status: TicketStatus.open,
     intent: TicketIntent.complaint,
     summary:
-        'Sản phẩm áo Polo bị lỗi rách chỉ ở nách, khách yêu cầu đổi ngay trong ngày.',
-    createdAgo: 'Vừa xong',
+        'The Polo arrived with a torn underarm seam; the customer requests a same-day replacement.',
+    createdAgo: 'Just now',
     ticketId: 'ticket_demo_102',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
         content:
-            'Chào shop, áo Polo Pro Active mình mới nhận bị rách chỉ ở phần nách, shop đổi mới giúp mình nhé!',
+            'Hi, my new Polo Pro Active arrived with a torn underarm seam. Could you replace it for me?',
       ),
       TicketMessage(
         sender: SenderType.bot,
         content:
-            'Dạ SportGear rất tiếc về sự cố này ạ! Em đã tạo Ticket ưu tiên #102 và chuyển trực tiếp cho Chuyên viên CSKH hỗ trợ đổi mới 1-1 tận nhà miễn phí trong 30 ngày cho bạn ngay ạ!',
+            'We are sorry about that. I created priority ticket #102 and assigned a support agent to arrange a free one-for-one home replacement under our 30-day policy.',
       ),
     ],
   ),
   const SupportTicket(
     number: 103,
-    customerName: 'Nguyễn Văn Tuấn (Facebook)',
+    customerName: 'Tuan Nguyen (Facebook)',
     source: TicketSource.facebook,
     status: TicketStatus.inProgress,
     intent: TicketIntent.question,
-    summary:
-        'Tư vấn chọn size giày chạy bộ Ultra Boost 2026 cho người chân bè.',
-    createdAgo: '12 phút trước',
+    summary: 'Size advice for Ultra Boost 2026 running shoes for wide feet.',
+    createdAgo: '12 minutes ago',
     ticketId: 'ticket_demo_103',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
         content:
-            'Giày Ultra Boost 2026 chân bè ngang 10cm thì nên đi size 42 hay 43 shop?',
+            'For 10 cm wide feet, should I choose size 42 or 43 in the Ultra Boost 2026?',
       ),
       TicketMessage(
         sender: SenderType.bot,
         content:
-            'Dạ với form chân bè ngang, bạn nên tăng 1 size lên 43 để mũi giày ôm chân êm ái và không bị tức ngón khi chạy bộ cự ly dài nhé!',
+            'For wide feet, we recommend sizing up to 43 for more toe room and comfort on longer runs.',
       ),
       TicketMessage(
         sender: SenderType.human,
         content:
-            'Dạ em Tuấn CSKH xin gửi bạn bảng đo cm chân chi tiết để chọn size chuẩn nhất ạ.',
+            'I will also send our foot-length chart so you can confirm the best size.',
       ),
     ],
   ),
   const SupportTicket(
     number: 104,
-    customerName: 'Trần Thị Mai (Email)',
+    customerName: 'Mai Tran (Email)',
     source: TicketSource.email,
     status: TicketStatus.open,
     intent: TicketIntent.question,
     summary:
-        'Hỏi điều kiện miễn phí vận chuyển toàn quốc và mã giảm giá đơn 1 triệu.',
-    createdAgo: '30 phút trước',
+        'Asked about nationwide free shipping and promotions for a 1,000,000 VND order.',
+    createdAgo: '30 minutes ago',
     ticketId: 'ticket_demo_104',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
         content:
-            'Shop cho mình hỏi đơn hàng trên 1 triệu có được freeship và tặng quà gì không?',
+            'Does an order over 1,000,000 VND include free shipping or a gift?',
       ),
       TicketMessage(
         sender: SenderType.bot,
         content:
-            'Dạ mọi đơn hàng từ 500.000đ đều được FREESHIP 100% toàn quốc. Đơn từ 1.000.000đ shop tặng thêm 01 bình giữ nhiệt thể thao Inox 304 cao cấp ạ!',
+            'All orders from 500,000 VND receive free nationwide shipping. Orders from 1,000,000 VND also include a premium stainless-steel sports bottle.',
       ),
     ],
   ),
   const SupportTicket(
     number: 101,
-    customerName: 'Lê Hoàng Nam (Web Store)',
+    customerName: 'Nam Le (Web Store)',
     source: TicketSource.web,
     status: TicketStatus.resolved,
     intent: TicketIntent.question,
     summary:
-        'Đã tư vấn bảng size quần Gym Flex và khách đã đặt hàng thành công.',
-    createdAgo: '1 giờ trước',
+        'Provided Gym Flex sizing advice; the customer completed an order.',
+    createdAgo: '1 hour ago',
     ticketId: 'ticket_demo_101',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Mình cao 1m75 nặng 70kg mặc quần Gym Flex size nào đẹp?',
+        content:
+            'I am 1.75 m tall and weigh 70 kg. Which Gym Flex size should I choose?',
       ),
       TicketMessage(
         sender: SenderType.bot,
         content:
-            'Dạ theo bảng size chuẩn SportGear, anh chọn size L (69-76kg) sẽ vừa vặn và thoải mái nhất khi tập gym ạ!',
+            'According to the SportGear size chart, size L (69–76 kg) should provide the best fit and workout comfort.',
       ),
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Cảm ơn shop, mình vừa đặt 2 chiếc trên web rồi nhé.',
+        content: 'Thank you. I just ordered two pairs from the website.',
       ),
     ],
   ),

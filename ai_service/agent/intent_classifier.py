@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from google import genai
@@ -47,13 +48,13 @@ def _load_prompt(filename: str) -> str:
 _SYSTEM_PROMPT = _load_prompt("intent_system.txt")
 
 _USER_TEMPLATE = """
-Tin nhắn từ khách hàng:
+Customer message:
 "{message}"
 
-Lịch sử hội thoại gần nhất (nếu có):
+Recent conversation (if any):
 {history}
 
-Phân loại intent và trả về JSON:"""
+Classify the intent and return JSON:"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ Phân loại intent và trả về JSON:"""
 _FALLBACK_RESULT = IntentResult(
     intent=IntentType.GENERAL_FAQ,
     confidence=0.40,
-    reasoning="Fallback — LLM không khả dụng",
+    reasoning="Fallback — LLM unavailable",
     detected_keywords=[],
     urgency_level=1,
 )
@@ -123,78 +124,95 @@ class IntentClassifier:
 
         clean_msg = message.strip().lower()
         norm_msg = _strip_accents(clean_msg)
+
+        def _has_phrase(phrases: list[str] | set[str]) -> bool:
+            return any(
+                re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", norm_msg)
+                is not None
+                for phrase in phrases
+            )
         
         # 1. Fast-path: Greetings (CHỈ áp dụng cho câu chào hỏi thuần túy, không có nội dung câu hỏi phía sau)
         greetings = {"hello", "hi", "xin chao", "chao", "chao shop", "hi shop", "shop oi", "alo", "alo shop", "hey", "yo", "good morning"}
         words_count = len(norm_msg.split())
-        question_words = ["gia", "bao nhieu", "size", "mau", "ship", "freeship", "co", "khong", "the nao", "o dau", "ao", "quan", "giay", "doi tra", "bao hanh", "cho minh hoi", "cho em hoi"]
-        has_question = any(qw in norm_msg for qw in question_words)
+        question_words = ["price", "how much", "size", "color", "shipping", "delivery", "return", "warranty", "where", "shirt", "pants", "shoes", "gia", "bao nhieu", "mau", "ship", "freeship", "co", "khong", "the nao", "o dau", "ao", "quan", "giay", "doi tra", "bao hanh", "cho minh hoi", "cho em hoi"]
+        has_question = _has_phrase(question_words)
 
         if (norm_msg in greetings or (words_count <= 3 and any(norm_msg.startswith(g) for g in greetings))) and not has_question:
             return IntentResult(
                 intent=IntentType.GREETING,
                 confidence=1.0,
-                reasoning="Fast-path: cụm từ chào hỏi thuần túy",
+                reasoning="Fast path: greeting only",
                 detected_keywords=[clean_msg],
                 urgency_level=1,
             )
 
         # 2. Fast-path: Human Escalation / Handoff request
         human_keywords = [
+            "live agent", "human agent", "support agent", "representative", "speak to someone",
+            "talk to a human", "talk to a person", "speak to a manager", "manager",
             "gap nhan vien", "gap tu van vien", "gap nguoi", "tu van vien", "noi chuyen voi nguoi",
             "chuyen nguoi that", "nhan vien cskh", "gap tong dai", "chuyen may", "noi chuyen voi nhan vien",
-            "goi nhan vien", "human", "agent", "gap cskh", "tu van truc tiep", "nhan vien ho tro"
+            "goi nhan vien", "human", "agent", "gap cskh", "tu van truc tiep", "nhan vien ho tro",
+            "gap quan ly", "noi chuyen voi quan ly",
         ]
-        if any(kw in norm_msg for kw in human_keywords):
+        if _has_phrase(human_keywords):
             return IntentResult(
                 intent=IntentType.ESCALATION_REQ,
                 confidence=0.99,
-                reasoning="Fast-path: Khách yêu cầu kết nối nhân viên tư vấn",
-                detected_keywords=[kw for kw in human_keywords if kw in norm_msg],
+                reasoning="Fast path: customer requested a human agent",
+                detected_keywords=[kw for kw in human_keywords if _has_phrase([kw])],
                 urgency_level=2,
             )
 
         # 3. Fast-path: Angry / Serious Complaints
         angry_keywords = [
+            "scam", "fraud", "police", "lawsuit", "sue", "one star", "1 star", "refund now",
             "lua dao", "tay chay", "bao cong an", "kien", "an cuop", "khon nan",
-            "hoan tien ngay", "doi tien", "lam an nhu", "buc minh qua"
+            "doi tien", "lam an nhu", "buc minh qua", "review 1 sao", "danh gia 1 sao",
         ]
-        if any(kw in norm_msg for kw in angry_keywords):
+        if _has_phrase(angry_keywords):
             return IntentResult(
                 intent=IntentType.ANGRY,
                 confidence=0.99,
-                reasoning="Fast-path: Phát hiện từ khóa bức xúc nghiêm trọng",
-                detected_keywords=[kw for kw in angry_keywords if kw in norm_msg],
+                reasoning="Fast path: severe anger keyword detected",
+                detected_keywords=[kw for kw in angry_keywords if _has_phrase([kw])],
                 urgency_level=3,
             )
 
         # 4. Fast-path: Standard Complaints
         complaint_keywords = [
-            "hang loi", "bi loi", "giao sai", "hu hong", "bi rach", "hang gia",
-            "hong", "thieu hang", "chua nhan duoc hang", "giao lau qua", "hang be", "doi tra"
+            "defective", "damaged", "broken", "torn", "wrong item", "missing item",
+            "not received", "late delivery", "poor quality", "refund", "return item",
+            "hang loi", "bi loi", "giao sai", "giao nham", "hu hong", "bi rach", "hang gia",
+            "hong", "thieu hang", "chua nhan duoc hang", "giao lau qua", "hang be", "doi tra",
+            "hoan tien", "kem chat luong",
         ]
-        if any(kw in norm_msg for kw in complaint_keywords) and ("khong" not in norm_msg and "the nao" not in norm_msg):
+        if _has_phrase(complaint_keywords) and not _has_phrase(["khong", "the nao"]):
             return IntentResult(
                 intent=IntentType.COMPLAINT,
                 confidence=0.95,
-                reasoning="Fast-path: Khách phản ánh vấn đề đơn hàng / khiếu nại",
-                detected_keywords=[kw for kw in complaint_keywords if kw in norm_msg],
-                urgency_level=2,
+                reasoning="Fast path: customer reported an order problem",
+                detected_keywords=[kw for kw in complaint_keywords if _has_phrase([kw])],
+                urgency_level=3 if _has_phrase(["hoan tien", "xu ly ngay"]) else 2,
             )
 
         # 5. Fast-path: Common FAQs (Product, policy, store info)
         faq_keywords = [
+            "price", "how much", "free shipping", "shipping", "delivery", "size", "color",
+            "warranty", "return policy", "exchange", "address", "location", "opening hours",
+            "material", "discount", "promotion", "shirt", "pants", "shoes", "backpack", "bottle", "yoga mat",
             "gia", "bao nhieu", "freeship", "ship", "phi ship", "van chuyen", "size", "kich co",
             "bao hanh", "doi tra", "doi size", "o dau", "dia chi", "chi nhanh", "mo cua",
             "chat lieu", "mau gi", "giam gia", "khuyen mai", "sale", "ao", "quan", "giay", "balo",
             "binh giu nhiet", "tham yoga", "polo", "pro active", "ultra boost", "hoa don", "chinh sach"
         ]
-        if any(kw in norm_msg for kw in faq_keywords):
+        if _has_phrase(faq_keywords):
             return IntentResult(
                 intent=IntentType.GENERAL_FAQ,
                 confidence=0.90,
-                reasoning="Fast-path: Câu hỏi thông tin sản phẩm, chính sách hoặc dịch vụ",
-                detected_keywords=[kw for kw in faq_keywords if kw in norm_msg],
+                reasoning="Fast path: product, policy, or service question",
+                detected_keywords=[kw for kw in faq_keywords if _has_phrase([kw])],
                 urgency_level=1,
             )
 
@@ -220,14 +238,7 @@ class IntentClassifier:
                 "IntentClassifier LLM fallback for message '%s...': %s",
                 message[:50], exc,
             )
-            # Fallback thông minh: nếu có câu hỏi thì coi là FAQ
-            return IntentResult(
-                intent=IntentType.GENERAL_FAQ,
-                confidence=0.85,
-                reasoning="Fallback NLP heuristic: phân loại câu hỏi tư vấn khách hàng",
-                detected_keywords=[],
-                urgency_level=1,
-            )
+            return _FALLBACK_RESULT
 
     async def _call_with_retry(self, system: str, user: str) -> IntentResult:
         """Gọi Gemini API không kéo dài delay nếu gặp 429 ResourceExhausted."""
@@ -258,13 +269,7 @@ class IntentClassifier:
             data = json.loads(raw_json)
         except Exception:
             # Nếu JSON bị lỗi cụ thể (ví dụ Unterminated string), fallback
-            return IntentResult(
-                intent=IntentType.GENERAL_FAQ,
-                confidence=0.80,
-                reasoning="LLM JSON parse fallback",
-                detected_keywords=[],
-                urgency_level=1,
-            )
+            return _FALLBACK_RESULT
 
         # Normalize intent string (uppercase + trim)
         if "intent" in data:
@@ -293,12 +298,12 @@ class IntentClassifier:
         Chỉ lấy tối đa 3 tin nhắn gần nhất (6 turns = 3 cặp hỏi-đáp).
         """
         if not history:
-            return "(Đây là tin nhắn đầu tiên trong cuộc hội thoại)"
+            return "(This is the first message in the conversation.)"
 
         recent = history[-(max_turns * 2):]
         lines = []
         for msg in recent:
-            role_label = "Khách" if msg["role"] == "user" else "Bot"
+            role_label = "Customer" if msg["role"] == "user" else "Bot"
             content = msg["content"][:200]  # Truncate để tránh quá dài
             lines.append(f"  {role_label}: {content}")
 

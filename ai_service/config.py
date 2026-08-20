@@ -17,6 +17,14 @@ class Settings(BaseSettings):
 
     backend_url: str = "http://backend:8000"
 
+    # Local AI. "fallback" keeps the deterministic classroom demo; "ollama"
+    # enables a fully local model without requiring Supabase or cloud keys.
+    ai_provider: str = "auto"
+    ollama_url: str = "http://ollama:11434"
+    ollama_chat_model: str = "qwen3:8b-q4_K_M"
+    ollama_embedding_model: str = "qwen3-embedding:0.6b"
+    ollama_timeout_seconds: float = 90.0
+
     # ── Google AI ──────────────────────────────────────────────────
     google_api_key: str = ""
 
@@ -33,6 +41,7 @@ class Settings(BaseSettings):
 
     # ── ChromaDB ───────────────────────────────────────────────────
     chroma_persist_dir: str = "./chroma_db"
+    local_knowledge_dir: str = "./local_knowledge"
 
     # ── Firebase FCM ───────────────────────────────────────────────
     fcm_credentials_path: str = ""       # Path đến service account JSON
@@ -46,7 +55,7 @@ class Settings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 64
     retrieval_top_k: int = 5
-    similarity_threshold: float = 0.35  # Phù hợp với tiếng Việt và local ONNX embeddings
+    similarity_threshold: float = 0.60
 
     # ── Intent Classification ──────────────────────────────────────
     intent_confidence_threshold: float = 0.60  # FAQ dưới mức này → handoff
