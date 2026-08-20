@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from core.auth import get_current_user, require_super_admin
 from core.database import get_supabase_client, get_supabase_admin
+from core import demo_store
 from models.domain import (
     APIResponse, MetaResponse,
     TicketCreate, TicketUpdate, TicketOut,
@@ -13,51 +14,142 @@ from models.domain import (
 
 router = APIRouter()
 
+_demo_fallback_warnings: set[str] = set()
+
+
+def _log_demo_fallback_once(key: str, message: str, error: Exception) -> None:
+    if key in _demo_fallback_warnings:
+        return
+    _demo_fallback_warnings.add(key)
+    print(f"{message}: {error}")
+
+
+DEMO_STATS_FALLBACK = {
+    "total_tickets": 12,
+    "open_tickets": 3,
+    "in_progress_tickets": 2,
+    "resolved_tickets": 9,
+    "ai_handled_percent": 91.5,
+    "avg_response_time": "0.4s",
+    "satisfaction_score": "4.9/5.0",
+    "saved_salary": "21.500.000đ/tháng",
+    "estimated_revenue": "42.000.000đ",
+    "channels": {
+        "web": 7,
+        "facebook": 3,
+        "email": 2,
+    },
+}
+
+DEMO_PRODUCT_ISSUES_FALLBACK = {
+    "top_product_issues": [
+        {"product": "Áo Polo Pro Active", "complaint_count": 8, "top_issues": ["Áo rách chỉ ở nách sau 2 tuần", "Size L nhưng mặc như XL", "Màu bay sau vài lần giặt"]},
+        {"product": "Giày Ultra Boost 2026", "complaint_count": 5, "top_issues": ["Đế giày bong keo sau 1 tháng", "Size 42 bị chật hơn bình thường"]},
+        {"product": "Quần Gym Flex", "complaint_count": 3, "top_issues": ["Đường may bị xổ ở háng"]},
+    ],
+    "ai_knowledge_gaps": [
+        {"topic": "Hướng dẫn chăm sóc sản phẩm", "query_count": 4},
+        {"topic": "Chương trình thành viên VIP", "query_count": 2},
+        {"topic": "Bảo hành giày theo thương hiệu", "query_count": 1},
+    ],
+}
+
+DEMO_AGENT_PERFORMANCE_FALLBACK = {
+    "avg_bot_response_seconds": 0.4,
+    "avg_human_response_seconds": 185,
+    "ai_vs_human_ratio": "91.5% AI / 8.5% Nhân Viên",
+    "total_tickets": 12,
+    "resolved_tickets": 9,
+    "resolution_rate_percent": 91.5,
+    "human_tickets": 1,
+    "hourly_distribution": [
+        {"hour": "8:00", "count": 2},
+        {"hour": "9:00", "count": 5},
+        {"hour": "10:00", "count": 8},
+        {"hour": "11:00", "count": 6},
+        {"hour": "12:00", "count": 4},
+        {"hour": "13:00", "count": 3},
+        {"hour": "14:00", "count": 7},
+        {"hour": "15:00", "count": 9},
+        {"hour": "16:00", "count": 11},
+        {"hour": "17:00", "count": 6},
+        {"hour": "18:00", "count": 4},
+        {"hour": "19:00", "count": 3},
+    ],
+    "top_agents": [
+        {"name": "Nguyễn Thị Lan (CSKH)", "tickets_handled": 24, "avg_response_min": 2.1, "satisfaction": 4.9},
+        {"name": "Trần Minh Tuấn (Senior)", "tickets_handled": 18, "avg_response_min": 3.5, "satisfaction": 4.8},
+        {"name": "Lê Hồng Anh (Agent)", "tickets_handled": 12, "avg_response_min": 4.2, "satisfaction": 4.7},
+    ],
+}
+
 
 @router.get("/demo-list", response_model=APIResponse)
 def get_demo_tickets():
     """Endpoint không cần auth cho Flutter Web Admin Demo"""
-    supabase = get_supabase_admin()
-    result = (
-        supabase.table("tickets")
-        .select("*")
-        .order("created_at", desc=True)
-        .limit(50)
-        .execute()
-    )
+    try:
+        supabase = get_supabase_admin()
+        result = (
+            supabase.table("tickets")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        data = result.data or []
+    except Exception as e:
+        _log_demo_fallback_once(
+            "demo-list",
+            "Error fetching demo tickets; using in-memory demo store",
+            e,
+        )
+        data = demo_store.list_tickets()
     return APIResponse(
         meta=MetaResponse(code=200, message="Success"),
-        data=result.data or [],
+        data=data,
     )
 
 
 @router.get("/demo-detail/{ticket_id}", response_model=APIResponse)
 def get_demo_ticket_detail(ticket_id: UUID):
     """Endpoint không cần auth để lấy chi tiết ticket và messages cho Flutter Web & Store"""
-    supabase = get_supabase_admin()
-    ticket_result = (
-        supabase.table("tickets")
-        .select("*")
-        .eq("id", str(ticket_id))
-        .single()
-        .execute()
-    )
-    if not ticket_result.data:
-        raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
-    
-    messages_result = (
-        supabase.table("messages")
-        .select("*")
-        .eq("ticket_id", str(ticket_id))
-        .order("created_at", desc=False)
-        .execute()
-    )
-    return APIResponse(
-        meta=MetaResponse(code=200, message="Success"),
-        data={
+    try:
+        supabase = get_supabase_admin()
+        ticket_result = (
+            supabase.table("tickets")
+            .select("*")
+            .eq("id", str(ticket_id))
+            .single()
+            .execute()
+        )
+        if not ticket_result.data:
+            raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+
+        messages_result = (
+            supabase.table("messages")
+            .select("*")
+            .eq("ticket_id", str(ticket_id))
+            .order("created_at", desc=False)
+            .execute()
+        )
+        detail = {
             "ticket": ticket_result.data,
             "messages": messages_result.data or [],
-        },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        _log_demo_fallback_once(
+            "demo-detail",
+            "Error fetching demo ticket detail; using in-memory demo store",
+            e,
+        )
+        detail = demo_store.get_ticket_detail(str(ticket_id))
+        if not detail:
+            raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+    return APIResponse(
+        meta=MetaResponse(code=200, message="Success"),
+        data=detail,
     )
 
 
@@ -67,18 +159,26 @@ def get_demo_ai_suggestions(ticket_id: UUID):
     Sinh 3 gợi ý trả lời thông minh động (AI Copilot Drafts)
     dựa trên câu hỏi thực tế mới nhất của khách hàng trong Ticket.
     """
-    supabase = get_supabase_admin()
-    
-    # Lấy tin nhắn mới nhất của khách hàng
-    msgs_res = (
-        supabase.table("messages")
-        .select("content, sender_type, created_at")
-        .eq("ticket_id", str(ticket_id))
-        .order("created_at", desc=True)
-        .limit(6)
-        .execute()
-    )
-    messages = msgs_res.data or []
+    try:
+        supabase = get_supabase_admin()
+        # Lấy tin nhắn mới nhất của khách hàng
+        msgs_res = (
+            supabase.table("messages")
+            .select("content, sender_type, created_at")
+            .eq("ticket_id", str(ticket_id))
+            .order("created_at", desc=True)
+            .limit(6)
+            .execute()
+        )
+        messages = msgs_res.data or []
+    except Exception as e:
+        _log_demo_fallback_once(
+            "demo-ai-suggestions",
+            "Error fetching demo AI suggestions; using in-memory demo store",
+            e,
+        )
+        detail = demo_store.get_ticket_detail(str(ticket_id))
+        messages = detail["messages"] if detail else []
     
     customer_text = ""
     for m in messages:
@@ -140,11 +240,22 @@ def get_demo_ai_suggestions(ticket_id: UUID):
 @router.get("/demo-stats", response_model=APIResponse)
 def get_demo_dashboard_stats():
     """Thống kê tổng quan cho Flutter Web Admin Dashboard (không cần auth)"""
-    supabase = get_supabase_admin()
-    
-    # 1. Tổng tickets
-    all_tickets = supabase.table("tickets").select("id, status, intent, source, created_at").execute()
-    tickets_data = all_tickets.data or []
+    try:
+        supabase = get_supabase_admin()
+        # 1. Tổng tickets
+        all_tickets = supabase.table("tickets").select("id, status, intent, source, created_at").execute()
+        tickets_data = all_tickets.data or []
+    except Exception as e:
+        _log_demo_fallback_once("demo-stats", "Error fetching demo stats", e)
+        return APIResponse(
+            meta=MetaResponse(code=200, message="Success"),
+            data=demo_store.dashboard_stats(),
+        )
+    if not tickets_data:
+        return APIResponse(
+            meta=MetaResponse(code=200, message="Success"),
+            data=demo_store.dashboard_stats(),
+        )
     
     total = len(tickets_data)
     open_count = sum(1 for t in tickets_data if t.get("status") in ["open", "pending"])
@@ -191,25 +302,32 @@ def get_demo_product_issues():
     Phân tích các sản phẩm bị báo lỗi nhiều nhất từ complaints.
     Trả về top sản phẩm dựa trên keyword trong nội dung tin nhắn.
     """
-    supabase = get_supabase_admin()
+    try:
+        supabase = get_supabase_admin()
 
-    # Lấy tất cả messages từ complaint tickets
-    complaint_tickets = (
-        supabase.table("tickets")
-        .select("id, summary")
-        .eq("intent", "complaint")
-        .execute()
-    )
+        # Lấy tất cả messages từ complaint tickets
+        complaint_tickets = (
+            supabase.table("tickets")
+            .select("id, summary")
+            .eq("intent", "complaint")
+            .execute()
+        )
 
-    # Lấy messages từ tất cả tickets (để phân tích nội dung)
-    all_msgs = (
-        supabase.table("messages")
-        .select("content, sender_type, created_at")
-        .eq("sender_type", "customer")
-        .order("created_at", desc=True)
-        .limit(200)
-        .execute()
-    )
+        # Lấy messages từ tất cả tickets (để phân tích nội dung)
+        all_msgs = (
+            supabase.table("messages")
+            .select("content, sender_type, created_at")
+            .eq("sender_type", "customer")
+            .order("created_at", desc=True)
+            .limit(200)
+            .execute()
+        )
+    except Exception as e:
+        _log_demo_fallback_once("demo-product-issues", "Error fetching demo product issues", e)
+        return APIResponse(
+            meta=MetaResponse(code=200, message="Success"),
+            data=DEMO_PRODUCT_ISSUES_FALLBACK,
+        )
 
     import unicodedata
     def _strip(s: str) -> str:
@@ -249,13 +367,10 @@ def get_demo_product_issues():
 
     # Đảm bảo có dữ liệu demo nếu DB chưa có nhiều
     if all(v["count"] == 0 for v in product_counts.values()):
-        product_counts = {
-            "Áo Polo Pro Active": {"count": 8, "issues": ["Áo rách chỉ ở nách sau 2 tuần", "Size L nhưng mặc như XL", "Màu bay sau vài lần giặt"]},
-            "Giày Ultra Boost 2026": {"count": 5, "issues": ["Đế giày bong keo sau 1 tháng", "Size 42 bị chật hơn bình thường"]},
-            "Quần Gym Flex": {"count": 3, "issues": ["Đường may bị xổ ở háng"]},
-            "Balo Sport Pro": {"count": 1, "issues": ["Khóa kéo bị kẹt"]},
-            "Áo Thun DryFit": {"count": 1, "issues": ["Vải bị co rút sau khi giặt máy"]},
-        }
+        return APIResponse(
+            meta=MetaResponse(code=200, message="Success"),
+            data=DEMO_PRODUCT_ISSUES_FALLBACK,
+        )
 
     # Sắp xếp theo số lần báo lỗi
     sorted_products = sorted(
@@ -298,17 +413,24 @@ def get_demo_agent_performance():
     Thống kê hiệu suất nhân viên: thời gian phản hồi, số ticket xử lý,
     tỷ lệ chốt thành công, so sánh AI vs human handling time.
     """
-    supabase = get_supabase_admin()
     from datetime import datetime, timezone, timedelta
 
-    # Lấy tất cả messages gần đây
-    all_msgs = (
-        supabase.table("messages")
-        .select("ticket_id, sender_type, created_at")
-        .order("created_at", desc=False)
-        .limit(500)
-        .execute()
-    )
+    try:
+        supabase = get_supabase_admin()
+        # Lấy tất cả messages gần đây
+        all_msgs = (
+            supabase.table("messages")
+            .select("ticket_id, sender_type, created_at")
+            .order("created_at", desc=False)
+            .limit(500)
+            .execute()
+        )
+    except Exception as e:
+        _log_demo_fallback_once("demo-agent-performance", "Error fetching demo agent performance", e)
+        return APIResponse(
+            meta=MetaResponse(code=200, message="Success"),
+            data=DEMO_AGENT_PERFORMANCE_FALLBACK,
+        )
 
     # Nhóm messages theo ticket để tính thời gian phản hồi
     ticket_msgs: dict = {}
@@ -347,8 +469,16 @@ def get_demo_agent_performance():
     avg_human_secs = round(sum(human_response_times) / len(human_response_times), 1) if human_response_times else 185.0
 
     # Thống kê tickets
-    tickets_data = supabase.table("tickets").select("id, status, intent, assigned_to, created_at, resolved_at").execute()
-    all_tickets = tickets_data.data or []
+    try:
+        tickets_data = supabase.table("tickets").select("id, status, intent, assigned_to, created_at, resolved_at").execute()
+        all_tickets = tickets_data.data or []
+    except Exception as e:
+        _log_demo_fallback_once(
+            "demo-performance-tickets",
+            "Error fetching demo performance tickets",
+            e,
+        )
+        all_tickets = []
 
     total = len(all_tickets)
     resolved = sum(1 for t in all_tickets if t.get("status") == "resolved")
@@ -356,36 +486,13 @@ def get_demo_agent_performance():
 
     # Fallback demo data nếu DB chưa có nhiều dữ liệu
     if avg_bot_secs == 0.4 or total < 3:
+        fallback = dict(DEMO_AGENT_PERFORMANCE_FALLBACK)
+        fallback["total_tickets"] = max(total, 12)
+        fallback["resolved_tickets"] = max(resolved, 9)
+        fallback["human_tickets"] = max(human_handled, 1)
         return APIResponse(
             meta=MetaResponse(code=200, message="Success"),
-            data={
-                "avg_bot_response_seconds": 0.4,
-                "avg_human_response_seconds": 185,
-                "ai_vs_human_ratio": "91.5% AI / 8.5% Nhân Viên",
-                "total_tickets": max(total, 12),
-                "resolved_tickets": max(resolved, 9),
-                "resolution_rate_percent": 91.5,
-                "human_tickets": max(human_handled, 1),
-                "hourly_distribution": [
-                    {"hour": "8:00", "count": 2},
-                    {"hour": "9:00", "count": 5},
-                    {"hour": "10:00", "count": 8},
-                    {"hour": "11:00", "count": 6},
-                    {"hour": "12:00", "count": 4},
-                    {"hour": "13:00", "count": 3},
-                    {"hour": "14:00", "count": 7},
-                    {"hour": "15:00", "count": 9},
-                    {"hour": "16:00", "count": 11},
-                    {"hour": "17:00", "count": 6},
-                    {"hour": "18:00", "count": 4},
-                    {"hour": "19:00", "count": 3},
-                ],
-                "top_agents": [
-                    {"name": "Nguyễn Thị Lan (CSKH)", "tickets_handled": 24, "avg_response_min": 2.1, "satisfaction": 4.9},
-                    {"name": "Trần Minh Tuấn (Senior)", "tickets_handled": 18, "avg_response_min": 3.5, "satisfaction": 4.8},
-                    {"name": "Lê Hồng Anh (Agent)", "tickets_handled": 12, "avg_response_min": 4.2, "satisfaction": 4.7},
-                ],
-            },
+            data=fallback,
         )
 
     # Phân bổ theo giờ trong ngày
@@ -426,20 +533,32 @@ class TicketStatusUpdatePayload(BaseModel):
 @router.patch("/demo-status/{ticket_id}", response_model=APIResponse)
 def update_demo_ticket_status(ticket_id: UUID, payload: TicketStatusUpdatePayload):
     """Cập nhật trạng thái ticket không cần auth cho Flutter Web Admin"""
-    supabase = get_supabase_admin()
-    
     update_data = {"status": payload.status}
     if payload.status == "resolved":
         from datetime import datetime, timezone
         update_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
 
-    result = supabase.table("tickets").update(update_data).eq("id", str(ticket_id)).execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+    try:
+        supabase = get_supabase_admin()
+        result = supabase.table("tickets").update(update_data).eq("id", str(ticket_id)).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
+        data = result.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        _log_demo_fallback_once(
+            "demo-status",
+            "Error updating demo ticket status; using in-memory demo store",
+            e,
+        )
+        data = demo_store.update_ticket(str(ticket_id), **update_data)
+        if not data:
+            raise HTTPException(status_code=404, detail="Ticket không tồn tại.")
         
     return APIResponse(
         meta=MetaResponse(code=200, message=f"Đã cập nhật trạng thái thành {payload.status}."),
-        data=result.data[0],
+        data=data,
     )
 
 
@@ -640,6 +759,3 @@ def update_ticket(
         meta=MetaResponse(code=200, message="Ticket đã được cập nhật."),
         data=result.data[0],
     )
-
-
-

@@ -15,9 +15,17 @@ from config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: init Supabase client
-    from db.client import get_supabase
-    await get_supabase()
+    # Startup: init Supabase client when configured. The class demo fallback
+    # must still boot so /health and /process work without service credentials.
+    if settings.supabase_url and settings.supabase_service_key:
+        try:
+            from db.client import get_supabase
+            await get_supabase()
+        except Exception as exc:
+            print(f"Supabase init skipped; demo fallback is available: {exc}")
+    else:
+        print("Supabase env missing; demo fallback is available")
+
     print(f"🚀 {settings.app_name} ready")
     print(f"   Models : intent={settings.intent_model} | rag={settings.rag_model}")
     print(f"   ChromaDB: {settings.chroma_persist_dir}")

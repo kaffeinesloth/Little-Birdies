@@ -6,21 +6,35 @@ Smart Helpdesk is a SaaS platform that helps small and medium online businesses 
 
 ## Demo Runbook
 
+Fastest path from a fresh clone: [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
 For teammate setup after pulling `main`, see [docs/TEAM_DEMO_GUIDE.md](docs/TEAM_DEMO_GUIDE.md).
 
 Quick Docker start:
 
 ```bash
-cp backend/.env.example backend/.env
-cp ai_service/.env.example ai_service/.env
 docker compose up --build
 ```
 
+For a pure fallback demo, `.env` files are optional. For live Supabase ticket persistence, copy the examples and fill real credentials before starting:
+
+```bash
+cp .env.example .env
+cp backend/.env.example backend/.env
+cp ai_service/.env.example ai_service/.env
+cp store/.env.example store/.env
+```
+
+The root `.env` and store Supabase values are optional; without them, the browser clients use backend polling.
+
 Demo URLs:
 
-- Flutter web admin/mobile responsive app: http://localhost:8080
+- Store customer chat: http://localhost:3000
+- Flutter staff/admin UI: http://localhost:8080
 - Backend API docs: http://localhost:8000/api/docs
+- AI health: http://localhost:8001/health
 - AI service docs: http://localhost:8001/docs
+- Optional React admin prototype in `web/` is not served by Docker Compose for the final non-Zalo demo.
 
 ## Team Information
 

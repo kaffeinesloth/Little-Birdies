@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 import os
 import httpx
-from dependencies import get_orchestrator
+from dependencies import get_demo_fallback_orchestrator, get_orchestrator
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
@@ -26,6 +26,7 @@ class ProcessPayload(BaseModel):
     source: str
     content: str
     customer_name: Optional[str] = None
+    persist_reply: bool = True
 
 
 class ProcessResponse(BaseModel):
@@ -62,27 +63,40 @@ async def process_incoming_message(
             channel=payload.source,
             external_id=payload.customer_id,
         )
-
-        # Gửi bot reply về Backend
-        if result.reply:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    await client.post(
-                        f"{BACKEND_URL}/api/v1/messages/bot-reply",
-                        json={
-                            "ticket_id": payload.ticket_id,
-                            "content": result.reply,
-                        }
-                    )
-            except Exception as e:
-                logger.error("Failed to callback backend for ticket %s: %s", payload.ticket_id, e)
-
-        return ProcessResponse(
-            status="ok",
-            reply=result.reply or "",
-            action=result.action.value if hasattr(result.action, "value") else str(result.action),
-            ticket_id=payload.ticket_id,
-        )
     except Exception as exc:
-        logger.error("Error in /process for ticket %s: %s", payload.ticket_id, exc)
-        raise HTTPException(status_code=500, detail=f"AI processing failed: {str(exc)}")
+        logger.warning(
+            "Real AI processing failed for ticket %s; using demo fallback: %s",
+            payload.ticket_id,
+            exc,
+        )
+        fallback = get_demo_fallback_orchestrator()
+        result = await fallback.process(
+            tenant_id="default",
+            conversation_id=f"{payload.source}_{payload.customer_id}",
+            message=payload.content.strip(),
+            channel=payload.source,
+            external_id=payload.customer_id,
+        )
+
+    # Gửi bot reply về Backend khi caller muốn AI tự persist.
+    # The store-chat /incoming path persists the returned reply itself so it
+    # can keep one owner for visible message insertion.
+    if result.reply and payload.persist_reply:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(
+                    f"{BACKEND_URL}/api/v1/messages/bot-reply",
+                    json={
+                        "ticket_id": payload.ticket_id,
+                        "content": result.reply,
+                    }
+                )
+        except Exception as e:
+            logger.error("Failed to callback backend for ticket %s: %s", payload.ticket_id, e)
+
+    return ProcessResponse(
+        status="ok",
+        reply=result.reply or "",
+        action=result.action.value if hasattr(result.action, "value") else str(result.action),
+        ticket_id=payload.ticket_id,
+    )

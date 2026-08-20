@@ -3,9 +3,8 @@ import { MessageSquare, X, Send, Bot, UserCheck, Sparkles, RotateCcw, Zap } from
 import { createClient } from '@supabase/supabase-js';
 
 const BACKEND_URL = 'http://localhost:8000';
-const SUPABASE_URL = 'https://djgvczqdtysefrdmujrr.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZ3ZjenFkdHlzZWZyZG11anJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MDMyODAsImV4cCI6MjEwMTk3OTI4MH0.sRdLhWHSV6OF6wjnvXsTwTyhxLl7yS5MQYOMvkKadiw';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 interface MessageItem {
   id: string;
@@ -24,6 +23,20 @@ const QUICK_PROMPTS = [
   'Chính sách đổi trả trong bao lâu?',
   'Tôi muốn gặp nhân viên CSKH trực tiếp',
 ];
+
+const CHAT_SESSION_KEY = 'sportgear_chat_customer_id';
+
+const createCustomerId = () => 'guest_' + Math.random().toString(36).substring(2, 10);
+
+const formatTime = (value?: string | number | Date) =>
+  new Date(value || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+const makeWelcomeMessage = (id = 'welcome'): MessageItem => ({
+  id,
+  sender_type: 'bot',
+  content: DEFAULT_WELCOME,
+  timeStr: formatTime(),
+});
 
 // Helper render Markdown đơn giản (hỗ trợ **in đậm**, • gạch đầu dòng, icon)
 const FormattedMessage: React.FC<{ content: string; isCustomer: boolean }> = ({ content, isCustomer }) => {
@@ -66,14 +79,7 @@ const FormattedMessage: React.FC<{ content: string; isCustomer: boolean }> = ({ 
 export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessage }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inputText, setInputText] = useState('');
-  const [messages, setMessages] = useState<MessageItem[]>([
-    {
-      id: 'welcome',
-      sender_type: 'bot',
-      content: DEFAULT_WELCOME,
-      timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+  const [messages, setMessages] = useState<MessageItem[]>([makeWelcomeMessage()]);
   const [isTyping, setIsTyping] = useState(false);
   const [currentTicketId, setCurrentTicketId] = useState<string | null>(null);
   const displayedIds = useRef<Set<string>>(new Set(['welcome']));
@@ -81,8 +87,16 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
   const pollIntervalRef = useRef<any>(null);
 
   // Tạo customer ID duy nhất cho phiên chat
-  const [customerId] = useState(() => {
-    return 'guest_' + Math.random().toString(36).substring(2, 10);
+  const [customerId, setCustomerId] = useState(() => {
+    try {
+      const existing = window.localStorage.getItem(CHAT_SESSION_KEY);
+      if (existing) return existing;
+      const created = createCustomerId();
+      window.localStorage.setItem(CHAT_SESSION_KEY, created);
+      return created;
+    } catch {
+      return createCustomerId();
+    }
   });
 
   const scrollToBottom = () => {
@@ -93,6 +107,12 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
     scrollToBottom();
   }, [messages, isTyping, isOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
   // Khi có initialMessage từ nút "Hỏi AI" trên Card sản phẩm -> Tự động mở và gửi luôn
   useEffect(() => {
     if (initialMessage && initialMessage.trim()) {
@@ -101,9 +121,57 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
     }
   }, [initialMessage]);
 
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const addSystemMessage = (content: string, idPrefix: string) => {
+    const id = `${idPrefix}_${Date.now()}`;
+    displayedIds.current.add(id);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id,
+        sender_type: 'bot',
+        content,
+        timeStr: formatTime(),
+      },
+    ]);
+  };
+
+  const appendRemoteReply = (msg: any) => {
+    if (msg.sender_type !== 'bot' && msg.sender_type !== 'human') return false;
+
+    const messageId =
+      msg.id ||
+      `${msg.sender_type}_${msg.created_at || Date.now()}_${String(msg.content || '').slice(0, 24)}`;
+
+    if (displayedIds.current.has(messageId)) return false;
+
+    displayedIds.current.add(messageId);
+    setIsTyping(false);
+    setMessages((prev) => {
+      if (prev.some((item) => item.id === messageId)) return prev;
+      return [
+        ...prev,
+        {
+          id: messageId,
+          sender_type: msg.sender_type,
+          content: msg.content || '',
+          timeStr: formatTime(msg.created_at),
+        },
+      ];
+    });
+    return true;
+  };
+
   // Supabase Realtime setup
   useEffect(() => {
     if (!currentTicketId) return;
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
 
     let supabase: any;
     try {
@@ -114,26 +182,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages', filter: `ticket_id=eq.${currentTicketId}` },
           (payload: any) => {
-            const msg = payload.new;
-            if (msg.sender_type === 'bot' || msg.sender_type === 'human') {
-              if (!displayedIds.current.has(msg.id)) {
-                displayedIds.current.add(msg.id);
-                setIsTyping(false);
-                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: msg.id,
-                    sender_type: msg.sender_type,
-                    content: msg.content,
-                    timeStr: new Date(msg.created_at || Date.now()).toLocaleTimeString('vi-VN', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    }),
-                  },
-                ]);
-              }
-            }
+            appendRemoteReply(payload.new);
           }
         )
         .subscribe();
@@ -147,13 +196,20 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
   }, [currentTicketId]);
 
   const pollForReply = (ticketId: string) => {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    stopPolling();
     let attempts = 0;
+    let sawReply = false;
     pollIntervalRef.current = setInterval(async () => {
       attempts++;
-      if (attempts > 20) {
-        clearInterval(pollIntervalRef.current);
+      if (attempts > 120) {
+        stopPolling();
         setIsTyping(false);
+        if (!sawReply) {
+          addSystemMessage(
+            'Dạ mình đã nhận tin nhắn của bạn. Nếu phản hồi tự động chưa hiện ngay, nhân viên SportGear vẫn có thể tiếp tục trả lời trong khung chat này ạ.',
+            `timeout_${ticketId}`
+          );
+        }
         return;
       }
       try {
@@ -163,29 +219,10 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
           const list = json.data?.messages || [];
           let hasNewReply = false;
           for (const msg of list) {
-            if (
-              (msg.sender_type === 'bot' || msg.sender_type === 'human') &&
-              !displayedIds.current.has(msg.id)
-            ) {
-              displayedIds.current.add(msg.id);
-              setIsTyping(false);
-              hasNewReply = true;
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: msg.id,
-                  sender_type: msg.sender_type,
-                  content: msg.content,
-                  timeStr: new Date(msg.created_at || Date.now()).toLocaleTimeString('vi-VN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  }),
-                },
-              ]);
-            }
+            hasNewReply = appendRemoteReply(msg) || hasNewReply;
           }
           if (hasNewReply) {
-            clearInterval(pollIntervalRef.current);
+            sawReply = true;
           }
         }
       } catch (e) {
@@ -205,9 +242,10 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
       id: userMsgId,
       sender_type: 'customer',
       content: text,
-      timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      timeStr: formatTime(),
     };
 
+    stopPolling();
     setMessages((prev) => [...prev, userMessage]);
     if (!customText) setInputText('');
     setIsTyping(true);
@@ -230,6 +268,8 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
           const tId = json.data.ticket_id;
           setCurrentTicketId(tId);
           pollForReply(tId);
+        } else {
+          throw new Error('Missing ticket_id');
         }
       } else {
         throw new Error('Server error');
@@ -237,30 +277,28 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
     } catch (e) {
       console.error('Send error:', e);
       setIsTyping(false);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: 'err_' + Date.now(),
-          sender_type: 'bot',
-          content: 'Dạ xin lỗi bạn, hệ thống đang xử lý một chút. Bạn có thể gửi lại câu hỏi nhé!',
-          timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
+      addSystemMessage(
+        'Dạ xin lỗi bạn, hệ thống chat đang kết nối chưa ổn định. Bạn thử gửi lại tin nhắn giúp mình nhé!',
+        'err'
+      );
     }
   };
 
   const handleResetChat = () => {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    stopPolling();
+    const nextCustomerId = createCustomerId();
+    try {
+      window.localStorage.setItem(CHAT_SESSION_KEY, nextCustomerId);
+    } catch {
+      // Ignore storage errors; state still starts a fresh in-memory session.
+    }
+    setCustomerId(nextCustomerId);
     setCurrentTicketId(null);
-    displayedIds.current = new Set(['welcome']);
-    setMessages([
-      {
-        id: 'welcome_' + Date.now(),
-        sender_type: 'bot',
-        content: DEFAULT_WELCOME,
-        timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-      },
-    ]);
+    setIsTyping(false);
+    setInputText('');
+    const welcome = makeWelcomeMessage('welcome_' + Date.now());
+    displayedIds.current = new Set([welcome.id]);
+    setMessages([welcome]);
   };
 
   return (

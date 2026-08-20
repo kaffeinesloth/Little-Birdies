@@ -9,11 +9,17 @@
 **/.mypy_cache
 **/.ruff_cache
 web/node_modules
+store/node_modules
 web/.next
+web/dist
+store/dist
 mobile/.dart_tool
 mobile/build
 mobile/ios/Pods
 mobile/android/.gradle
 ai_service/chroma_db
+backend/.venv
+ai_service/.venv
+.venv
 *.log
 .DS_Store

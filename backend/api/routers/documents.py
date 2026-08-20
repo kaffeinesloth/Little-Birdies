@@ -95,8 +95,7 @@ async def upload_demo_document(file: UploadFile = File(...)):
     except Exception as e:
         print(f"Error forwarding to AI Service: {e}")
 
-    # 2. Lưu vào Supabase documents table
-    supabase = get_supabase_admin()
+    # 2. Lưu vào Supabase documents table nếu cấu hình demo có sẵn.
     new_doc = {
         "id": doc_id,
         "name": file.filename or "Tai_Lieu_Moi.txt",
@@ -105,6 +104,7 @@ async def upload_demo_document(file: UploadFile = File(...)):
         "chunk_count": max(4, len(content) // 256),
     }
     try:
+        supabase = get_supabase_admin()
         supabase.table("documents").insert(new_doc).execute()
     except Exception as e:
         print(f"Error saving to supabase: {e}")
@@ -118,11 +118,11 @@ async def upload_demo_document(file: UploadFile = File(...)):
 @router.delete("/demo-delete/{doc_id}", response_model=APIResponse)
 async def delete_demo_document(doc_id: str):
     """Xóa tài liệu khỏi database và ChromaDB"""
-    supabase = get_supabase_admin()
     try:
+        supabase = get_supabase_admin()
         supabase.table("documents").delete().eq("id", doc_id).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error deleting document from supabase: {e}")
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

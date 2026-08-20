@@ -14,6 +14,34 @@ from models.domain import (
 router = APIRouter()
 
 
+DEMO_USERS = [
+    {
+        "id": "usr_001",
+        "full_name": "Nguyễn Hoàng Nam",
+        "email": "nam.nguyen@sportgear.vn",
+        "role": "super_admin",
+        "status": "online",
+        "created_at": "2026-08-10T08:00:00Z",
+    },
+    {
+        "id": "usr_002",
+        "full_name": "Trần Thị Thu Hà",
+        "email": "ha.tran@sportgear.vn",
+        "role": "agent",
+        "status": "online",
+        "created_at": "2026-08-12T09:30:00Z",
+    },
+    {
+        "id": "usr_003",
+        "full_name": "Lê Quốc Bảo",
+        "email": "bao.le@sportgear.vn",
+        "role": "agent",
+        "status": "offline",
+        "created_at": "2026-08-15T14:15:00Z",
+    },
+]
+
+
 class StaffCreateDemoPayload(BaseModel):
     full_name: str
     email: str
@@ -22,8 +50,8 @@ class StaffCreateDemoPayload(BaseModel):
 @router.get("/demo-list", response_model=APIResponse)
 def list_demo_users():
     """Lấy danh sách nhân viên CSKH cho Web Admin Demo"""
-    supabase = get_supabase_client()
     try:
+        supabase = get_supabase_client()
         res = supabase.table("users").select("id, email, full_name, role, status, created_at, last_seen_at").order("created_at", desc=True).execute()
         users = res.data or []
     except Exception:
@@ -31,11 +59,7 @@ def list_demo_users():
 
     if not users:
         # Fallback danh sách nhân viên mẫu nếu DB chưa có
-        users = [
-            {"id": "usr_001", "full_name": "Nguyễn Hoàng Nam", "email": "nam.nguyen@sportgear.vn", "role": "super_admin", "status": "online", "created_at": "2026-08-10T08:00:00Z"},
-            {"id": "usr_002", "full_name": "Trần Thị Thu Hà", "email": "ha.tran@sportgear.vn", "role": "agent", "status": "online", "created_at": "2026-08-12T09:30:00Z"},
-            {"id": "usr_003", "full_name": "Lê Quốc Bảo", "email": "bao.le@sportgear.vn", "role": "agent", "status": "offline", "created_at": "2026-08-15T14:15:00Z"},
-        ]
+        users = DEMO_USERS
 
     return APIResponse(meta=MetaResponse(code=200, message="Success"), data=users)
 
@@ -43,7 +67,6 @@ def list_demo_users():
 @router.post("/demo-create", response_model=APIResponse, status_code=201)
 def create_demo_user(payload: StaffCreateDemoPayload):
     """Tạo nhân viên CSKH mới cho Web Admin Demo"""
-    supabase = get_supabase_client()
     from uuid import uuid4
     user_id = str(uuid4())
     new_user = {
@@ -54,6 +77,7 @@ def create_demo_user(payload: StaffCreateDemoPayload):
         "status": "online",
     }
     try:
+        supabase = get_supabase_client()
         supabase.table("users").insert(new_user).execute()
     except Exception:
         pass
@@ -64,8 +88,8 @@ def create_demo_user(payload: StaffCreateDemoPayload):
 @router.delete("/demo-delete/{user_id}", response_model=APIResponse)
 def delete_demo_user(user_id: str):
     """Xóa nhân viên CSKH cho Web Admin Demo"""
-    supabase = get_supabase_client()
     try:
+        supabase = get_supabase_client()
         supabase.table("users").delete().eq("id", user_id).execute()
     except Exception:
         pass
@@ -75,9 +99,9 @@ def delete_demo_user(user_id: str):
 @router.patch("/demo-status/{user_id}", response_model=APIResponse)
 def update_demo_user_status(user_id: str, body: dict):
     """Đổi trạng thái Online/Offline của nhân viên"""
-    supabase = get_supabase_client()
     new_status = body.get("status", "online")
     try:
+        supabase = get_supabase_client()
         supabase.table("users").update({"status": new_status}).eq("id", user_id).execute()
     except Exception:
         pass

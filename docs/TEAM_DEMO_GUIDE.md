@@ -2,12 +2,12 @@
 
 This guide is for teammates after the latest code is pushed to `main`.
 
-The demo goal is not purchasing/payment. The goal is to show a real support flow:
+The demo goal is not purchasing/payment or real Zalo OA. The final non-Zalo path shows this support flow:
 
-1. Customer sends a message from a channel such as Zalo OA.
-2. Backend receives the webhook.
+1. Customer sends a message from the SportGear store chat at `http://localhost:3000`.
+2. Backend receives `POST /api/v1/messages/incoming` with `source="web"`.
 3. AI service classifies the message and answers or escalates.
-4. Web/mobile staff workspace shows the ticket.
+4. Flutter staff workspace at `http://localhost:8080` shows the ticket.
 5. Employee uses Human Takeover and replies.
 6. Ticket is marked resolved.
 
@@ -20,14 +20,17 @@ git pull
 
 ## 2. Prepare Environment Files
 
-Copy the examples:
+For a pure fallback startup, `.env` files are optional because Docker Compose supplies blank demo-safe defaults. For live Supabase persistence and seeded tickets, copy the examples:
 
 ```bash
+cp .env.example .env
 cp backend/.env.example backend/.env
 cp ai_service/.env.example ai_service/.env
+cp store/.env.example store/.env
 ```
 
-Fill in real values.
+Fill in real values when using Supabase or real Gemini/RAG. Keep `AI_SERVICE_URL=http://ai-service:8001` and `BACKEND_URL=http://backend:8000` inside Docker; use localhost only for manual local runs.
+The root `.env` is only for Docker Compose build-time browser values.
 
 Backend values:
 
@@ -35,7 +38,7 @@ Backend values:
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_KEY=
-AI_SERVICE_URL=http://localhost:8001
+AI_SERVICE_URL=http://ai-service:8001
 
 FB_VERIFY_TOKEN=
 FB_APP_SECRET=
@@ -56,9 +59,18 @@ GOOGLE_API_KEY=
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_KEY=
-CHROMA_PERSIST_DIR=./chroma_db
-BACKEND_URL=http://localhost:8000
+CHROMA_PERSIST_DIR=/data/chroma_db
+BACKEND_URL=http://backend:8000
 ```
+
+Store values are optional and only enable Supabase Realtime; the final demo also works through backend polling when these are blank:
+
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+```
+
+Flutter web can receive optional Realtime values at build time with `--dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...`. Docker Compose reads browser build values from the root `.env`.
 
 Never commit `.env` files.
 
@@ -72,10 +84,32 @@ docker compose up --build
 
 URLs:
 
+- Store customer chat: http://localhost:3000
 - Flutter web admin/mobile responsive app: http://localhost:8080
+- Primary staff/admin demo UI: Flutter at http://localhost:8080
+- Optional React admin prototype under `web/` is not served by Docker Compose for the final non-Zalo demo.
 - Backend API docs: http://localhost:8000/api/docs
 - AI service docs: http://localhost:8001/docs
 - AI health: http://localhost:8001/health
+
+Quick startup validation:
+
+```bash
+docker compose config --services
+curl http://localhost:8000/
+curl http://localhost:8001/health
+curl http://localhost:8000/api/v1/tickets/demo-stats
+curl http://localhost:8000/api/v1/documents/demo-list
+```
+
+Expected services from `docker compose config --services`:
+
+```text
+ai-service
+backend
+flutter-web
+store-website
+```
 
 Stop services:
 
@@ -88,6 +122,22 @@ Reset local AI vector data:
 ```bash
 docker compose down -v
 ```
+
+## 3.1 Seed Non-Zalo Demo Data
+
+For the customer-store final demo, prepare repeatable SportGear tickets and AI knowledge before presenting:
+
+```bash
+cd backend
+python seed.py
+
+cd ../ai_service
+python seed_knowledge.py --mode auto
+```
+
+The backend seed is safe by default and refreshes only known SportGear demo tickets. Full ticket/message wipes require `python seed.py --reset-all --yes`.
+
+More details: [docs/DEMO_DATA_SETUP.md](DEMO_DATA_SETUP.md).
 
 ## 4. Run Without Docker
 

@@ -4,14 +4,22 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 
+bool supabaseRealtimeEnabled = false;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
   try {
-    await Supabase.initialize(
-      url: 'https://djgvczqdtysefrdmujrr.supabase.co',
-      anonKey:
-          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZ3ZjenFkdHlzZWZyZG11anJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MDMyODAsImV4cCI6MjEwMTk3OTI4MH0.sRdLhWHSV6OF6wjnvXsTwTyhxLl7yS5MQYOMvkKadiw',
-    );
+    if (supabaseUrl.isNotEmpty && supabaseAnonKey.isNotEmpty) {
+      await Supabase.initialize(
+        url: supabaseUrl,
+        anonKey: supabaseAnonKey,
+      );
+      supabaseRealtimeEnabled = true;
+    } else {
+      print('Supabase init skipped; Flutter demo will use REST polling.');
+    }
   } catch (e) {
     print('Supabase init notice: $e');
   }
@@ -36,9 +44,9 @@ class SmartHelpdeskApp extends StatelessWidget {
           surface: Colors.white,
         ),
         textTheme: Theme.of(context).textTheme.apply(
-              bodyColor: AppColors.slate900,
-              displayColor: AppColors.slate900,
-            ),
+          bodyColor: AppColors.slate900,
+          displayColor: AppColors.slate900,
+        ),
       ),
       home: const WebAdminWorkspace(),
     );
@@ -56,7 +64,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   Timer? _pollTimer;
   int _tabIndex = 0;
   TicketSource? _channelFilter;
-  TicketStatus? _statusFilter;          // ← Mới: filter theo trạng thái
+  TicketStatus? _statusFilter; // ← Mới: filter theo trạng thái
   SupportTicket _selectedTicket = initialDemoTickets.first;
   bool _humanTakeover = false;
   final _replyController = TextEditingController();
@@ -64,7 +72,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   List<SupportTicket> _tickets = List.from(initialDemoTickets);
   List<TicketMessage> _liveMessages = [];
   Map<String, dynamic> _dashboardStats = {};
-  Map<String, dynamic> _productIssues = {};  // ← Mới: dữ liệu sản phẩm lỗi
+  Map<String, dynamic> _productIssues = {}; // ← Mới: dữ liệu sản phẩm lỗi
   Map<String, dynamic> _agentPerformance = {}; // ← Mới: hiệu suất nhân viên
   List<Map<String, dynamic>> _staffList = [];
   List<Map<String, dynamic>> _documentsList = [];
@@ -113,41 +121,263 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     });
   }
 
+  void _showDemoSnack(String message, {Color color = AppColors.slate700}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Map<String, dynamic> _demoStatsFallback() => {
+    'total_tickets': 12,
+    'open_tickets': 3,
+    'in_progress_tickets': 2,
+    'resolved_tickets': 9,
+    'ai_handled_percent': 91.5,
+    'saved_salary': '21.500.000đ/tháng',
+    'estimated_revenue': '42.000.000đ',
+    'channels': {'web': 7, 'facebook': 3, 'email': 2},
+  };
+
+  Map<String, dynamic> _demoProductIssuesFallback() => {
+    'top_product_issues': [
+      {
+        'product': 'Áo Polo Pro Active',
+        'complaint_count': 8,
+        'top_issues': [
+          'Áo rách chỉ ở nách sau 2 tuần',
+          'Size L nhưng mặc như XL',
+          'Màu bay sau vài lần giặt',
+        ],
+      },
+      {
+        'product': 'Giày Ultra Boost 2026',
+        'complaint_count': 5,
+        'top_issues': [
+          'Đế giày bong keo sau 1 tháng',
+          'Size 42 bị chật hơn bình thường',
+        ],
+      },
+      {
+        'product': 'Quần Gym Flex',
+        'complaint_count': 3,
+        'top_issues': ['Đường may bị xổ ở háng'],
+      },
+    ],
+    'ai_knowledge_gaps': [
+      {'topic': 'Hướng dẫn chăm sóc sản phẩm', 'query_count': 4},
+      {'topic': 'Chương trình thành viên VIP', 'query_count': 2},
+      {'topic': 'Bảo hành giày theo thương hiệu', 'query_count': 1},
+    ],
+  };
+
+  Map<String, dynamic> _demoAgentPerformanceFallback() => {
+    'avg_bot_response_seconds': 0.4,
+    'avg_human_response_seconds': 185,
+    'ai_vs_human_ratio': '91.5% AI / 8.5% Nhân Viên',
+    'total_tickets': 12,
+    'resolved_tickets': 9,
+    'resolution_rate_percent': 91.5,
+    'human_tickets': 1,
+    'hourly_distribution': [
+      {'hour': '8:00', 'count': 2},
+      {'hour': '9:00', 'count': 5},
+      {'hour': '10:00', 'count': 8},
+      {'hour': '11:00', 'count': 6},
+      {'hour': '12:00', 'count': 4},
+      {'hour': '13:00', 'count': 3},
+      {'hour': '14:00', 'count': 7},
+      {'hour': '15:00', 'count': 9},
+      {'hour': '16:00', 'count': 11},
+      {'hour': '17:00', 'count': 6},
+      {'hour': '18:00', 'count': 4},
+      {'hour': '19:00', 'count': 3},
+    ],
+    'top_agents': [
+      {
+        'name': 'Nguyễn Thị Lan (CSKH)',
+        'tickets_handled': 24,
+        'avg_response_min': 2.1,
+        'satisfaction': 4.9,
+      },
+      {
+        'name': 'Trần Minh Tuấn (Senior)',
+        'tickets_handled': 18,
+        'avg_response_min': 3.5,
+        'satisfaction': 4.8,
+      },
+      {
+        'name': 'Lê Hồng Anh (Agent)',
+        'tickets_handled': 12,
+        'avg_response_min': 4.2,
+        'satisfaction': 4.7,
+      },
+    ],
+  };
+
+  List<Map<String, dynamic>> _demoStaffFallback() => [
+    {
+      'id': 'usr_001',
+      'full_name': 'Nguyễn Hoàng Nam',
+      'email': 'nam.nguyen@sportgear.vn',
+      'role': 'super_admin',
+      'status': 'online',
+    },
+    {
+      'id': 'usr_002',
+      'full_name': 'Trần Thị Thu Hà',
+      'email': 'ha.tran@sportgear.vn',
+      'role': 'agent',
+      'status': 'online',
+    },
+    {
+      'id': 'usr_003',
+      'full_name': 'Lê Quốc Bảo',
+      'email': 'bao.le@sportgear.vn',
+      'role': 'agent',
+      'status': 'offline',
+    },
+  ];
+
+  List<Map<String, dynamic>> _demoDocumentsFallback() => [
+    {
+      'id': 'doc_default_sportgear',
+      'name': 'sportgear_store.txt (6 Sản Phẩm & Chính Sách CSKH)',
+      'file_type': 'txt',
+      'embedding_status': 'completed',
+      'chunk_count': 19,
+    },
+  ];
+
+  SupportTicket _fallbackTicketFor(String ticketId) {
+    return initialDemoTickets.firstWhere(
+      (ticket) => ticket.ticketId == ticketId,
+      orElse: () => initialDemoTickets.first,
+    );
+  }
+
+  SupportTicket _ticketFromRecord(Map<String, dynamic> e) {
+    final rawId = e['id']?.toString() ?? '';
+    return SupportTicket(
+      number: rawId.hashCode.abs() % 1000,
+      customerName: e['customer_name'] ?? e['customer_id'] ?? 'Khách Hàng',
+      source: _parseSource(e['source']),
+      status: _parseStatus(e['status']),
+      intent: _parseIntent(e['intent']),
+      summary:
+          e['summary'] ?? e['context_summary'] ?? 'Yêu cầu tư vấn sản phẩm',
+      createdAgo: 'Vừa xong',
+      ticketId: rawId,
+      messages: [],
+    );
+  }
+
+  TicketMessage _messageFromRecord(Map<String, dynamic> e) {
+    final senderType = e['sender_type']?.toString();
+    return TicketMessage(
+      id: e['id']?.toString(),
+      createdAt: e['created_at']?.toString(),
+      sender: senderType == 'bot'
+          ? SenderType.bot
+          : (senderType == 'human' ? SenderType.human : SenderType.customer),
+      content: e['content']?.toString() ?? '',
+    );
+  }
+
+  List<TicketMessage> _dedupeMessages(List<TicketMessage> messages) {
+    final seen = <String>{};
+    final deduped = <TicketMessage>[];
+    for (final message in messages) {
+      final strictKey = message.dedupeKey;
+      final contentKey = '${message.sender.index}:${message.content.trim()}';
+      if (seen.contains(strictKey) || seen.contains(contentKey)) continue;
+      seen.add(strictKey);
+      seen.add(contentKey);
+      deduped.add(message);
+    }
+    return deduped;
+  }
+
+  bool _appendMessageIfNew(TicketMessage message) {
+    final existing = _liveMessages.any(
+      (m) =>
+          m.dedupeKey == message.dedupeKey ||
+          (m.sender == message.sender &&
+              m.content.trim() == message.content.trim()),
+    );
+    if (existing) return false;
+    setState(() => _liveMessages.add(message));
+    return true;
+  }
+
+  void _setSelectedStatus(TicketStatus status) {
+    _selectedTicket = _selectedTicket.copyWith(status: status);
+    _tickets = _tickets
+        .map(
+          (ticket) => ticket.ticketId == _selectedTicket.ticketId
+              ? ticket.copyWith(status: status)
+              : ticket,
+        )
+        .toList();
+    _humanTakeover = status == TicketStatus.inProgress;
+  }
+
   // ── 1. Fetch Danh Sách Tickets Thật ─────────────────────────────────────────
   Future<void> _fetchTickets({bool silent = false}) async {
     try {
-      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-list'));
+      final res = await http.get(
+        Uri.parse('http://localhost:8000/api/v1/tickets/demo-list'),
+      );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
         final data = (jsonRes['data'] as List?) ?? [];
-        if (data.isNotEmpty) {
-          final loaded = data.map((e) {
-            final rawId = e['id']?.toString() ?? '';
-            return SupportTicket(
-              number: rawId.hashCode.abs() % 1000,
-              customerName: e['customer_name'] ?? e['customer_id'] ?? 'Khách Hàng',
-              source: _parseSource(e['source']),
-              status: _parseStatus(e['status']),
-              intent: _parseIntent(e['intent']),
-              summary: e['summary'] ?? e['context_summary'] ?? 'Yêu cầu tư vấn sản phẩm',
-              createdAgo: 'Vừa xong',
-              ticketId: rawId,
-              messages: [],
-            );
-          }).toList();
+        final loaded = data.isNotEmpty
+            ? data
+                  .map(
+                    (e) =>
+                        _ticketFromRecord(Map<String, dynamic>.from(e as Map)),
+                  )
+                  .toList()
+            : List<SupportTicket>.from(initialDemoTickets);
+        if (!mounted) return;
 
-          setState(() {
-            _tickets = loaded;
-            if (_selectedTicket.ticketId.isEmpty || !_tickets.any((t) => t.ticketId == _selectedTicket.ticketId)) {
-              _selectedTicket = _tickets.first;
-              _fetchMessages(_selectedTicket.ticketId);
-              _fetchAiSuggestions(_selectedTicket.ticketId);
-            }
-          });
+        String? ticketToLoad;
+        setState(() {
+          _tickets = loaded;
+          final selectedIndex = _tickets.indexWhere(
+            (t) => t.ticketId == _selectedTicket.ticketId,
+          );
+          if (selectedIndex >= 0) {
+            final latestSelected = _tickets[selectedIndex];
+            _selectedTicket = latestSelected.copyWith(
+              messages: _selectedTicket.messages,
+            );
+            _humanTakeover = _selectedTicket.status == TicketStatus.inProgress;
+          } else {
+            _selectedTicket = _tickets.first;
+            _humanTakeover = _selectedTicket.status == TicketStatus.inProgress;
+            _liveMessages = List.from(_selectedTicket.messages);
+            ticketToLoad = _selectedTicket.ticketId;
+          }
+        });
+
+        if (ticketToLoad != null && ticketToLoad!.isNotEmpty) {
+          _fetchMessages(ticketToLoad!);
+          _fetchAiSuggestions(ticketToLoad!);
         }
       }
     } catch (e) {
       if (!silent) print('Lỗi tải tickets: $e');
+      if (!mounted || _tickets.isNotEmpty) return;
+      setState(() {
+        _tickets = List.from(initialDemoTickets);
+        _selectedTicket = initialDemoTickets.first;
+        _liveMessages = List.from(_selectedTicket.messages);
+      });
     }
   }
 
@@ -155,27 +385,50 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   Future<void> _fetchMessages(String ticketId, {bool silent = false}) async {
     if (ticketId.isEmpty) return;
     try {
-      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-detail/$ticketId'));
+      final res = await http.get(
+        Uri.parse('http://localhost:8000/api/v1/tickets/demo-detail/$ticketId'),
+      );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+        final ticketData = jsonRes['data']?['ticket'];
         final data = (jsonRes['data']?['messages'] as List?) ?? [];
-        if (data.isNotEmpty) {
-          setState(() {
-            _liveMessages = data.map((e) {
-              final sType = e['sender_type'];
-              return TicketMessage(
-                sender: sType == 'bot'
-                    ? SenderType.bot
-                    : (sType == 'human' ? SenderType.human : SenderType.customer),
-                content: e['content'] ?? '',
-              );
-            }).toList();
-          });
-          _scrollToBottom();
-        }
+        final messages = _dedupeMessages(
+          data
+              .map(
+                (e) => _messageFromRecord(Map<String, dynamic>.from(e as Map)),
+              )
+              .toList(),
+        );
+        if (!mounted || ticketId != _selectedTicket.ticketId) return;
+        setState(() {
+          if (ticketData is Map) {
+            final detailTicket = _ticketFromRecord(
+              Map<String, dynamic>.from(ticketData),
+            ).copyWith(messages: messages);
+            _selectedTicket = detailTicket;
+            _tickets = _tickets
+                .map(
+                  (ticket) => ticket.ticketId == detailTicket.ticketId
+                      ? detailTicket
+                      : ticket,
+                )
+                .toList();
+            _humanTakeover = detailTicket.status == TicketStatus.inProgress;
+          }
+          _liveMessages = messages;
+        });
+        _scrollToBottom();
       }
     } catch (e) {
       if (!silent) print('Lỗi tải tin nhắn: $e');
+      if (!mounted ||
+          ticketId != _selectedTicket.ticketId ||
+          _liveMessages.isNotEmpty) {
+        return;
+      }
+      setState(
+        () => _liveMessages = List.from(_fallbackTicketFor(ticketId).messages),
+      );
     }
   }
 
@@ -184,11 +437,17 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     if (ticketId.isEmpty) return;
     setState(() => _isLoadingSuggestions = true);
     try {
-      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-ai-suggest/$ticketId'));
+      final res = await http.get(
+        Uri.parse(
+          'http://localhost:8000/api/v1/tickets/demo-ai-suggest/$ticketId',
+        ),
+      );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
-        final list = (jsonRes['data'] as List?)?.map((e) => e.toString()).toList() ?? [];
+        final list =
+            (jsonRes['data'] as List?)?.map((e) => e.toString()).toList() ?? [];
         if (list.isNotEmpty) {
+          if (!mounted || ticketId != _selectedTicket.ticketId) return;
           setState(() {
             _aiSuggestions = list;
             _isLoadingSuggestions = false;
@@ -197,6 +456,7 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
         }
       }
     } catch (_) {}
+    if (!mounted || ticketId != _selectedTicket.ticketId) return;
     setState(() => _isLoadingSuggestions = false);
   }
 
@@ -205,55 +465,101 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
     try {
       final futures = await Future.wait([
         http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-stats')),
-        http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-product-issues')),
-        http.get(Uri.parse('http://localhost:8000/api/v1/tickets/demo-agent-performance')),
+        http.get(
+          Uri.parse('http://localhost:8000/api/v1/tickets/demo-product-issues'),
+        ),
+        http.get(
+          Uri.parse(
+            'http://localhost:8000/api/v1/tickets/demo-agent-performance',
+          ),
+        ),
       ]);
       if (futures[0].statusCode == 200) {
-        setState(() => _dashboardStats = json.decode(utf8.decode(futures[0].bodyBytes))['data'] ?? {});
+        setState(
+          () => _dashboardStats =
+              json.decode(utf8.decode(futures[0].bodyBytes))['data'] ?? {},
+        );
+      } else if (_dashboardStats.isEmpty) {
+        setState(() => _dashboardStats = _demoStatsFallback());
       }
       if (futures[1].statusCode == 200) {
-        setState(() => _productIssues = json.decode(utf8.decode(futures[1].bodyBytes))['data'] ?? {});
+        setState(
+          () => _productIssues =
+              json.decode(utf8.decode(futures[1].bodyBytes))['data'] ?? {},
+        );
+      } else if (_productIssues.isEmpty) {
+        setState(() => _productIssues = _demoProductIssuesFallback());
       }
       if (futures[2].statusCode == 200) {
-        setState(() => _agentPerformance = json.decode(utf8.decode(futures[2].bodyBytes))['data'] ?? {});
+        setState(
+          () => _agentPerformance =
+              json.decode(utf8.decode(futures[2].bodyBytes))['data'] ?? {},
+        );
+      } else if (_agentPerformance.isEmpty) {
+        setState(() => _agentPerformance = _demoAgentPerformanceFallback());
       }
     } catch (e) {
       print('Lỗi tải stats: $e');
+      if (!mounted) return;
+      setState(() {
+        if (_dashboardStats.isEmpty) _dashboardStats = _demoStatsFallback();
+        if (_productIssues.isEmpty) {
+          _productIssues = _demoProductIssuesFallback();
+        }
+        if (_agentPerformance.isEmpty) {
+          _agentPerformance = _demoAgentPerformanceFallback();
+        }
+      });
     }
   }
 
   // ── 5. Fetch Danh Sách Nhân Viên Thật ──────────────────────────────────────
   Future<void> _fetchStaff() async {
     try {
-      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/users/demo-list'));
+      final res = await http.get(
+        Uri.parse('http://localhost:8000/api/v1/users/demo-list'),
+      );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
         setState(() {
           _staffList = List<Map<String, dynamic>>.from(jsonRes['data'] ?? []);
         });
+      } else if (_staffList.isEmpty) {
+        setState(() => _staffList = _demoStaffFallback());
       }
     } catch (e) {
       print('Lỗi tải nhân viên: $e');
+      if (!mounted || _staffList.isNotEmpty) return;
+      setState(() => _staffList = _demoStaffFallback());
     }
   }
 
   // ── 6. Fetch Danh Sách Tài Liệu Thật (ChromaDB) ────────────────────────────
   Future<void> _fetchDocuments() async {
     try {
-      final res = await http.get(Uri.parse('http://localhost:8000/api/v1/documents/demo-list'));
+      final res = await http.get(
+        Uri.parse('http://localhost:8000/api/v1/documents/demo-list'),
+      );
       if (res.statusCode == 200) {
         final jsonRes = json.decode(utf8.decode(res.bodyBytes));
         setState(() {
-          _documentsList = List<Map<String, dynamic>>.from(jsonRes['data'] ?? []);
+          _documentsList = List<Map<String, dynamic>>.from(
+            jsonRes['data'] ?? [],
+          );
         });
+      } else if (_documentsList.isEmpty) {
+        setState(() => _documentsList = _demoDocumentsFallback());
       }
     } catch (e) {
       print('Lỗi tải tài liệu: $e');
+      if (!mounted || _documentsList.isNotEmpty) return;
+      setState(() => _documentsList = _demoDocumentsFallback());
     }
   }
 
   // ── 7. Setup Supabase Realtime ─────────────────────────────────────────────
   void _setupRealtime() {
+    if (!supabaseRealtimeEnabled) return;
     try {
       Supabase.instance.client
           .channel('public:messages')
@@ -264,15 +570,8 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
             callback: (payload) {
               final msg = payload.newRecord;
               if (msg['ticket_id'] == _selectedTicket.ticketId) {
-                setState(() {
-                  _liveMessages.add(TicketMessage(
-                    sender: msg['sender_type'] == 'bot'
-                        ? SenderType.bot
-                        : (msg['sender_type'] == 'human' ? SenderType.human : SenderType.customer),
-                    content: msg['content'] ?? '',
-                  ));
-                });
-                _scrollToBottom();
+                final added = _appendMessageIfNew(_messageFromRecord(msg));
+                if (added) _scrollToBottom();
                 _fetchAiSuggestions(_selectedTicket.ticketId);
               }
               _fetchTickets(silent: true);
@@ -288,26 +587,45 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   void _sendReply() async {
     final text = _replyController.text.trim();
     if (text.isEmpty || _selectedTicket.ticketId.isEmpty) return;
+    final ticketId = _selectedTicket.ticketId;
 
     setState(() {
-      _liveMessages.add(TicketMessage(sender: SenderType.human, content: text));
       _replyController.clear();
       _humanTakeover = true;
+      _setSelectedStatus(TicketStatus.inProgress);
     });
-    _scrollToBottom();
 
     try {
-      await http.post(
+      final res = await http.post(
         Uri.parse('http://localhost:8000/api/v1/messages/agent-reply-demo'),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
-        body: json.encode({
-          'ticket_id': _selectedTicket.ticketId,
-          'content': text,
-        }),
+        body: json.encode({'ticket_id': ticketId, 'content': text}),
       );
-      _fetchTickets(silent: true);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await _fetchMessages(ticketId, silent: true);
+        _fetchAiSuggestions(ticketId);
+        _fetchTickets(silent: true);
+      } else if (mounted) {
+        _replyController.text = text;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Chưa gửi được phản hồi. Vui lòng thử lại trong giây lát.',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
     } catch (e) {
       print('Lỗi gửi tin nhắn: $e');
+      if (!mounted) return;
+      _replyController.text = text;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mất kết nối backend, phản hồi chưa được gửi.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
     }
   }
 
@@ -315,11 +633,17 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   Future<void> _updateTicketStatus(String newStatus) async {
     if (_selectedTicket.ticketId.isEmpty) return;
     try {
-      await http.patch(
-        Uri.parse('http://localhost:8000/api/v1/tickets/demo-status/${_selectedTicket.ticketId}'),
+      final res = await http.patch(
+        Uri.parse(
+          'http://localhost:8000/api/v1/tickets/demo-status/${_selectedTicket.ticketId}',
+        ),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
         body: json.encode({'status': newStatus}),
       );
+      if (!mounted) return;
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        setState(() => _setSelectedStatus(_parseStatus(newStatus)));
+      }
       _fetchTickets();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -355,7 +679,10 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
           children: [
             Icon(Icons.cloud_upload_rounded, color: AppColors.primary),
             SizedBox(width: 8),
-            Text('Nạp Tài Liệu Tri Thức Vào ChromaDB', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            Text(
+              'Nạp Tài Liệu Tri Thức Vào ChromaDB',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
           ],
         ),
         content: SizedBox(
@@ -374,7 +701,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 decoration: InputDecoration(
                   labelText: 'Tên tài liệu (.txt, .pdf, .docx)',
                   hintText: 'Ví dụ: Bang_Gia_Khuyen_Mai_Thang_8.txt',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 14),
@@ -383,8 +712,11 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 maxLines: 6,
                 decoration: InputDecoration(
                   labelText: 'Nội dung kiến thức cần nạp cho AI',
-                  hintText: 'Nhập thông số sản phẩm mới, bảng size, quy định bảo hành hoặc chính sách freeship...',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  hintText:
+                      'Nhập thông số sản phẩm mới, bảng size, quy định bảo hành hoặc chính sách freeship...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ],
@@ -405,27 +737,58 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 
               Navigator.pop(ctx);
               try {
-                final uri = Uri.parse('http://localhost:8000/api/v1/documents/demo-upload');
+                final uri = Uri.parse(
+                  'http://localhost:8000/api/v1/documents/demo-upload',
+                );
                 final request = http.MultipartRequest('POST', uri)
-                  ..files.add(http.MultipartFile.fromString(
-                    'file',
-                    content,
-                    filename: name.endsWith('.txt') ? name : '$name.txt',
-                  ));
+                  ..files.add(
+                    http.MultipartFile.fromString(
+                      'file',
+                      content,
+                      filename: name.endsWith('.txt') ? name : '$name.txt',
+                    ),
+                  );
                 final streamedResponse = await request.send();
-                final response = await http.Response.fromStream(streamedResponse);
+                final response = await http.Response.fromStream(
+                  streamedResponse,
+                );
 
                 if (response.statusCode == 201) {
+                  final jsonRes = json.decode(utf8.decode(response.bodyBytes));
+                  final uploadedDoc = Map<String, dynamic>.from(
+                    jsonRes['data'] ?? {},
+                  );
+                  if (uploadedDoc.isNotEmpty && mounted) {
+                    setState(() {
+                      _documentsList = [
+                        uploadedDoc,
+                        ..._documentsList.where(
+                          (doc) => doc['id'] != uploadedDoc['id'],
+                        ),
+                      ];
+                    });
+                  }
                   _fetchDocuments();
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Đã nạp và Index tài liệu "$name" vào ChromaDB thành công!'),
+                      content: Text(
+                        'Đã nạp và Index tài liệu "$name" vào ChromaDB thành công!',
+                      ),
                       backgroundColor: AppColors.success,
                     ),
+                  );
+                } else {
+                  _showDemoSnack(
+                    'Chưa nạp được tài liệu. Vui lòng kiểm tra backend/AI service.',
+                    color: AppColors.danger,
                   );
                 }
               } catch (e) {
                 print('Lỗi upload document: $e');
+                _showDemoSnack(
+                  'Mất kết nối backend, tài liệu chưa được nạp.',
+                  color: AppColors.danger,
+                );
               }
             },
           ),
@@ -437,7 +800,16 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
   // ── 11. Xóa Tài Liệu Khỏi ChromaDB ────────────────────────────────────────
   void _deleteDocument(String docId, String name) async {
     try {
-      await http.delete(Uri.parse('http://localhost:8000/api/v1/documents/demo-delete/$docId'));
+      final response = await http.delete(
+        Uri.parse('http://localhost:8000/api/v1/documents/demo-delete/$docId'),
+      );
+      if (mounted && response.statusCode >= 200 && response.statusCode < 300) {
+        setState(() {
+          _documentsList = _documentsList
+              .where((doc) => doc['id']?.toString() != docId)
+              .toList();
+        });
+      }
       _fetchDocuments();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -447,6 +819,15 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
       );
     } catch (e) {
       print('Lỗi xóa document: $e');
+      if (!mounted) return;
+      setState(() {
+        _documentsList = _documentsList
+            .where((doc) => doc['id']?.toString() != docId)
+            .toList();
+      });
+      _showDemoSnack(
+        'Backend chưa sẵn sàng, đã ẩn tài liệu khỏi màn hình demo.',
+      );
     }
   }
 
@@ -460,12 +841,17 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Row(
             children: [
               Icon(Icons.person_add_rounded, color: AppColors.primary),
               SizedBox(width: 8),
-              Text('Thêm Nhân Viên CSKH Mới', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              Text(
+                'Thêm Nhân Viên CSKH Mới',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
             ],
           ),
           content: SizedBox(
@@ -478,7 +864,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                   decoration: InputDecoration(
                     labelText: 'Họ và Tên',
                     hintText: 'Ví dụ: Nguyễn Văn Hoàng',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -487,7 +875,9 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                   decoration: InputDecoration(
                     labelText: 'Email Đăng Nhập',
                     hintText: 'Ví dụ: hoang.nguyen@sportgear.vn',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -495,14 +885,26 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                   value: role,
                   decoration: InputDecoration(
                     labelText: 'Vai Trò Phân Quyền',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
                   items: const [
-                    DropdownMenuItem(value: 'agent', child: Text('Nhân Viên Tư Vấn (Agent)')),
-                    DropdownMenuItem(value: 'senior_agent', child: Text('Trưởng Ca CSKH (Senior Agent)')),
-                    DropdownMenuItem(value: 'super_admin', child: Text('Chủ Shop / Quản Trị Viên (Super Admin)')),
+                    DropdownMenuItem(
+                      value: 'agent',
+                      child: Text('Nhân Viên Tư Vấn (Agent)'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'senior_agent',
+                      child: Text('Trưởng Ca CSKH (Senior Agent)'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'super_admin',
+                      child: Text('Chủ Shop / Quản Trị Viên (Super Admin)'),
+                    ),
                   ],
-                  onChanged: (val) => setDialogState(() => role = val ?? 'agent'),
+                  onChanged: (val) =>
+                      setDialogState(() => role = val ?? 'agent'),
                 ),
               ],
             ),
@@ -520,21 +922,56 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 
                 Navigator.pop(ctx);
                 try {
-                  await http.post(
+                  final res = await http.post(
                     Uri.parse('http://localhost:8000/api/v1/users/demo-create'),
-                    headers: {'Content-Type': 'application/json; charset=utf-8'},
+                    headers: {
+                      'Content-Type': 'application/json; charset=utf-8',
+                    },
                     body: json.encode({
                       'full_name': name,
                       'email': email,
                       'role': role,
                     }),
                   );
+                  if (mounted &&
+                      res.statusCode >= 200 &&
+                      res.statusCode < 300) {
+                    final jsonRes = json.decode(utf8.decode(res.bodyBytes));
+                    final created = Map<String, dynamic>.from(
+                      jsonRes['data'] ?? {},
+                    );
+                    if (created.isNotEmpty) {
+                      setState(() {
+                        _staffList = [
+                          created,
+                          ..._staffList.where(
+                            (staff) => staff['id'] != created['id'],
+                          ),
+                        ];
+                      });
+                    }
+                  }
                   _fetchStaff();
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Đã tạo nhân viên $name thành công!'), backgroundColor: AppColors.success),
+                    SnackBar(
+                      content: Text('Đã tạo nhân viên $name thành công!'),
+                      backgroundColor: AppColors.success,
+                    ),
                   );
                 } catch (e) {
                   print('Lỗi tạo nhân viên: $e');
+                  if (!mounted) return;
+                  final localUser = {
+                    'id': 'local_${DateTime.now().millisecondsSinceEpoch}',
+                    'full_name': name,
+                    'email': email,
+                    'role': role,
+                    'status': 'online',
+                  };
+                  setState(() => _staffList = [localUser, ..._staffList]);
+                  _showDemoSnack(
+                    'Backend chưa sẵn sàng, đã thêm nhân viên tạm cho màn hình demo.',
+                  );
                 }
               },
               child: const Text('Lưu Nhân Viên'),
@@ -547,46 +984,96 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
 
   void _deleteStaff(String userId, String name) async {
     try {
-      await http.delete(Uri.parse('http://localhost:8000/api/v1/users/demo-delete/$userId'));
+      final response = await http.delete(
+        Uri.parse('http://localhost:8000/api/v1/users/demo-delete/$userId'),
+      );
+      if (mounted && response.statusCode >= 200 && response.statusCode < 300) {
+        setState(() {
+          _staffList = _staffList
+              .where((staff) => staff['id']?.toString() != userId)
+              .toList();
+        });
+      }
       _fetchStaff();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Đã xóa nhân viên $name khỏi hệ thống.'), backgroundColor: AppColors.slate700),
+        SnackBar(
+          content: Text('Đã xóa nhân viên $name khỏi hệ thống.'),
+          backgroundColor: AppColors.slate700,
+        ),
       );
     } catch (e) {
       print('Lỗi xóa nhân viên: $e');
+      if (!mounted) return;
+      setState(() {
+        _staffList = _staffList
+            .where((staff) => staff['id']?.toString() != userId)
+            .toList();
+      });
+      _showDemoSnack(
+        'Backend chưa sẵn sàng, đã ẩn nhân viên khỏi màn hình demo.',
+      );
     }
   }
 
   void _toggleStaffStatus(String userId, String currentStatus) async {
     final newStatus = currentStatus == 'online' ? 'offline' : 'online';
     try {
-      await http.patch(
+      final response = await http.patch(
         Uri.parse('http://localhost:8000/api/v1/users/demo-status/$userId'),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
         body: json.encode({'status': newStatus}),
       );
+      if (mounted && response.statusCode >= 200 && response.statusCode < 300) {
+        setState(() {
+          _staffList = _staffList
+              .map(
+                (staff) => staff['id']?.toString() == userId
+                    ? {...staff, 'status': newStatus}
+                    : staff,
+              )
+              .toList();
+        });
+      }
       _fetchStaff();
     } catch (e) {
       print('Lỗi đổi trạng thái nhân viên: $e');
+      if (!mounted) return;
+      setState(() {
+        _staffList = _staffList
+            .map(
+              (staff) => staff['id']?.toString() == userId
+                  ? {...staff, 'status': newStatus}
+                  : staff,
+            )
+            .toList();
+      });
+      _showDemoSnack(
+        'Backend chưa sẵn sàng, đã đổi trạng thái tạm trên màn hình demo.',
+      );
     }
   }
 
   TicketSource _parseSource(String? s) {
-    if (s == 'facebook') return TicketSource.facebook;
-    if (s == 'email') return TicketSource.email;
+    final value = s?.toLowerCase();
+    if (value == 'facebook') return TicketSource.facebook;
+    if (value == 'email') return TicketSource.email;
     return TicketSource.web;
   }
 
   TicketStatus _parseStatus(String? s) {
-    if (s == 'open' || s == 'OPEN') return TicketStatus.open;
-    if (s == 'in_progress' || s == 'IN_PROGRESS') return TicketStatus.inProgress;
-    if (s == 'resolved' || s == 'RESOLVED') return TicketStatus.resolved;
+    final value = s?.toLowerCase();
+    if (value == 'open') return TicketStatus.open;
+    if (value == 'in_progress') return TicketStatus.inProgress;
+    if (value == 'resolved') return TicketStatus.resolved;
     return TicketStatus.pending;
   }
 
   TicketIntent _parseIntent(String? s) {
-    if (s == 'complaint' || s == 'COMPLAINT') return TicketIntent.complaint;
-    if (s == 'spam' || s == 'SPAM') return TicketIntent.spam;
+    final value = s?.toLowerCase();
+    if (value == 'complaint' || value == 'handoff') {
+      return TicketIntent.complaint;
+    }
+    if (value == 'spam') return TicketIntent.spam;
     return TicketIntent.question;
   }
 
@@ -602,7 +1089,10 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
               setState(() => _tabIndex = index);
               if (index == 0) _fetchTickets();
               if (index == 1) _fetchStats();
-              if (index == 2) { _fetchStaff(); _fetchDocuments(); }
+              if (index == 2) {
+                _fetchStaff();
+                _fetchDocuments();
+              }
             },
             onRefreshAll: () {
               _fetchTickets();
@@ -614,7 +1104,10 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                 _fetchAiSuggestions(_selectedTicket.ticketId);
               }
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Đã làm mới toàn bộ dữ liệu hệ thống!'), duration: Duration(seconds: 1)),
+                const SnackBar(
+                  content: Text('Đã làm mới toàn bộ dữ liệu hệ thống!'),
+                  duration: Duration(seconds: 1),
+                ),
               );
             },
           ),
@@ -644,12 +1137,15 @@ class _WebAdminWorkspaceState extends State<WebAdminWorkspace> {
                     _fetchMessages(ticket.ticketId);
                     _fetchAiSuggestions(ticket.ticketId);
                   },
-                  onChannelFilter: (filter) => setState(() => _channelFilter = filter),
-                  onStatusFilter: (status) => setState(() => _statusFilter = status),
+                  onChannelFilter: (filter) =>
+                      setState(() => _channelFilter = filter),
+                  onStatusFilter: (status) =>
+                      setState(() => _statusFilter = status),
                   onToggleTakeover: _toggleHumanTakeover,
                   onResolveTicket: () => _updateTicketStatus('resolved'),
                   onUpdateStatus: (st) => _updateTicketStatus(st),
-                  onFillDraft: (text) => setState(() => _replyController.text = text),
+                  onFillDraft: (text) =>
+                      setState(() => _replyController.text = text),
                   onSendReply: _sendReply,
                 ),
                 // Tab 1: Analytics & Executive Dashboard
@@ -715,10 +1211,18 @@ class _WebHeader extends StatelessWidget {
               ),
               borderRadius: BorderRadius.circular(12),
               boxShadow: const [
-                BoxShadow(color: Color(0x332563EB), blurRadius: 8, offset: Offset(0, 3)),
+                BoxShadow(
+                  color: Color(0x332563EB),
+                  blurRadius: 8,
+                  offset: Offset(0, 3),
+                ),
               ],
             ),
-            child: const Icon(Icons.headset_mic_rounded, color: Colors.white, size: 22),
+            child: const Icon(
+              Icons.headset_mic_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
           ),
           const SizedBox(width: 14),
           const Expanded(
@@ -874,11 +1378,14 @@ class _DemoGuideBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     String text;
     if (tabIndex == 0) {
-      text = 'Đang ở Tab 1: Live Chat CSKH. Giao diện toàn màn hình, cuộn độc lập riêng trong khung chat, kết nối 2 chiều với Web Store (Port 3000).';
+      text =
+          'Đang ở Tab 1: Live Chat CSKH. Giao diện toàn màn hình, cuộn độc lập riêng trong khung chat, kết nối 2 chiều với Web Store (Port 3000).';
     } else if (tabIndex == 1) {
-      text = 'Đang ở Tab 2: Báo cáo phân tích doanh thu và tỷ lệ tự động hóa do AI chốt đơn được cập nhật trực tiếp từ Database.';
+      text =
+          'Đang ở Tab 2: Báo cáo phân tích doanh thu và tỷ lệ tự động hóa do AI chốt đơn được cập nhật trực tiếp từ Database.';
     } else {
-      text = 'Đang ở Tab 3: Trung tâm Quản Trị dành riêng cho Quản Lý — Quản lý nhân sự, phân quyền trực ca và nạp tri thức ChromaDB cho AI bot.';
+      text =
+          'Đang ở Tab 3: Trung tâm Quản Trị dành riêng cho Quản Lý — Quản lý nhân sự, phân quyền trực ca và nạp tri thức ChromaDB cho AI bot.';
     }
 
     return Container(
@@ -1064,20 +1571,32 @@ class _ConversationPanel extends StatelessWidget {
             color: AppColors.slate50,
             child: Row(
               children: [
-                const Icon(Icons.inbox_rounded, size: 18, color: AppColors.primary),
+                const Icon(
+                  Icons.inbox_rounded,
+                  size: 18,
+                  color: AppColors.primary,
+                ),
                 const SizedBox(width: 8),
-                const Text(
-                  'HỘP THƯ HỢP NHẤT',
-                  style: TextStyle(
-                    color: AppColors.slate900,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
+                const Expanded(
+                  child: Text(
+                    'HỘP THƯ HỢP NHẤT',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppColors.slate900,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Text(
                   '${tickets.length} tickets',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.slate500),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.slate500,
+                  ),
                 ),
               ],
             ),
@@ -1098,19 +1617,22 @@ class _ConversationPanel extends StatelessWidget {
                   onTap: () => onChannelFilter(null),
                 ),
                 _MiniFilterChip(
-                  label: 'Web (${allTickets.where((t) => t.source == TicketSource.web).length})',
+                  label:
+                      'Web (${allTickets.where((t) => t.source == TicketSource.web).length})',
                   selected: channelFilter == TicketSource.web,
                   color: AppColors.primary,
                   onTap: () => onChannelFilter(TicketSource.web),
                 ),
                 _MiniFilterChip(
-                  label: 'FB (${allTickets.where((t) => t.source == TicketSource.facebook).length})',
+                  label:
+                      'FB (${allTickets.where((t) => t.source == TicketSource.facebook).length})',
                   selected: channelFilter == TicketSource.facebook,
                   color: AppColors.indigo,
                   onTap: () => onChannelFilter(TicketSource.facebook),
                 ),
                 _MiniFilterChip(
-                  label: 'Email (${allTickets.where((t) => t.source == TicketSource.email).length})',
+                  label:
+                      'Email (${allTickets.where((t) => t.source == TicketSource.email).length})',
                   selected: channelFilter == TicketSource.email,
                   color: AppColors.success,
                   onTap: () => onChannelFilter(TicketSource.email),
@@ -1132,19 +1654,22 @@ class _ConversationPanel extends StatelessWidget {
                   onTap: () => onStatusFilter(null),
                 ),
                 _MiniFilterChip(
-                  label: 'Chờ XL (${allTickets.where((t) => t.status == TicketStatus.open).length})',
+                  label:
+                      'Chờ XL (${allTickets.where((t) => t.status == TicketStatus.open).length})',
                   selected: statusFilter == TicketStatus.open,
                   color: AppColors.danger,
                   onTap: () => onStatusFilter(TicketStatus.open),
                 ),
                 _MiniFilterChip(
-                  label: 'Đang TV (${allTickets.where((t) => t.status == TicketStatus.inProgress).length})',
+                  label:
+                      'Đang TV (${allTickets.where((t) => t.status == TicketStatus.inProgress).length})',
                   selected: statusFilter == TicketStatus.inProgress,
                   color: AppColors.warning,
                   onTap: () => onStatusFilter(TicketStatus.inProgress),
                 ),
                 _MiniFilterChip(
-                  label: 'Xong (${allTickets.where((t) => t.status == TicketStatus.resolved).length})',
+                  label:
+                      'Xong (${allTickets.where((t) => t.status == TicketStatus.resolved).length})',
                   selected: statusFilter == TicketStatus.resolved,
                   color: AppColors.success,
                   onTap: () => onStatusFilter(TicketStatus.resolved),
@@ -1280,11 +1805,15 @@ class _TicketListItem extends StatelessWidget {
             const SizedBox(height: 6),
             Row(
               children: [
-                IntentBadge(intent: ticket.intent),
-                const Spacer(),
+                Flexible(child: IntentBadge(intent: ticket.intent)),
+                const SizedBox(width: 8),
                 Text(
                   ticket.createdAgo,
-                  style: const TextStyle(color: AppColors.slate400, fontSize: 9.5, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    color: AppColors.slate400,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -1360,7 +1889,9 @@ class _MainChatRoom extends StatelessWidget {
                             ? 'Trạng thái: NHÂN VIÊN ĐANG TRỰC TIẾP TƯ VẤN (HUMAN TAKEOVER)'
                             : 'Trạng thái: AI TRỢ LÝ TỰ ĐỘNG GIẢI ĐÁP (24/7 AUTO SUPPORT)',
                         style: TextStyle(
-                          color: humanTakeover ? AppColors.warning : AppColors.success,
+                          color: humanTakeover
+                              ? AppColors.warning
+                              : AppColors.success,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                         ),
@@ -1375,12 +1906,18 @@ class _MainChatRoom extends StatelessWidget {
                     size: 16,
                   ),
                   label: Text(
-                    humanTakeover ? 'Nhân Viên Đang Trực' : 'Bật Tiếp Quản Trực',
+                    humanTakeover
+                        ? 'Nhân Viên Đang Trực'
+                        : 'Bật Tiếp Quản Trực',
                   ),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: humanTakeover ? AppColors.warning : AppColors.primary,
+                    foregroundColor: humanTakeover
+                        ? AppColors.warning
+                        : AppColors.primary,
                     side: BorderSide(
-                      color: humanTakeover ? AppColors.warning : AppColors.primary,
+                      color: humanTakeover
+                          ? AppColors.warning
+                          : AppColors.primary,
                     ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
@@ -1410,16 +1947,22 @@ class _MainChatRoom extends StatelessWidget {
               color: const Color(0xFFFBFDFF),
               child: messages.isEmpty
                   ? const Center(
-                      child: Text('Chưa có tin nhắn nào trong hội thoại này.', style: TextStyle(color: AppColors.slate400)),
+                      child: Text(
+                        'Chưa có tin nhắn nào trong hội thoại này.',
+                        style: TextStyle(color: AppColors.slate400),
+                      ),
                     )
                   : ListView.separated(
                       controller: scrollController,
                       physics: const AlwaysScrollableScrollPhysics(
-                        parent: ClampingScrollPhysics(), // Chặn triệt để nảy/overscroll sang trang cha
+                        parent:
+                            ClampingScrollPhysics(), // Chặn triệt để nảy/overscroll sang trang cha
                       ),
                       padding: const EdgeInsets.all(16),
-                      itemBuilder: (context, index) => ChatBubble(message: messages[index]),
-                      separatorBuilder: (context, index) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) =>
+                          ChatBubble(message: messages[index]),
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 12),
                       itemCount: messages.length,
                     ),
             ),
@@ -1467,7 +2010,11 @@ class _CustomerProfileSidebar extends StatelessWidget {
             color: AppColors.slate50,
             child: const Row(
               children: [
-                Icon(Icons.person_pin_rounded, size: 18, color: AppColors.indigo),
+                Icon(
+                  Icons.person_pin_rounded,
+                  size: 18,
+                  color: AppColors.indigo,
+                ),
                 SizedBox(width: 8),
                 Text(
                   'HỒ SƠ KHÁCH HÀNG & CRM',
@@ -1496,8 +2043,14 @@ class _CustomerProfileSidebar extends StatelessWidget {
                         radius: 20,
                         backgroundColor: AppColors.primarySoft,
                         child: Text(
-                          ticket.customerName.isNotEmpty ? ticket.customerName[0] : 'K',
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 16),
+                          ticket.customerName.isNotEmpty
+                              ? ticket.customerName[0]
+                              : 'K',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                            fontSize: 16,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -1507,13 +2060,19 @@ class _CustomerProfileSidebar extends StatelessWidget {
                           children: [
                             Text(
                               ticket.customerName,
-                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                             const Text(
                               'Khách hàng tiềm năng (Online)',
-                              style: TextStyle(color: AppColors.slate500, fontSize: 10.5),
+                              style: TextStyle(
+                                color: AppColors.slate500,
+                                fontSize: 10.5,
+                              ),
                             ),
                           ],
                         ),
@@ -1523,10 +2082,26 @@ class _CustomerProfileSidebar extends StatelessWidget {
                   const SizedBox(height: 14),
 
                   // Metadata Cards
-                  _ProfileDetailItem(label: 'Kênh Liên Hệ', value: ticket.source.label, icon: ticket.source.icon),
-                  _ProfileDetailItem(label: 'Ý Định Phân Loại', value: ticket.intent.label, icon: ticket.intent.icon),
-                  _ProfileDetailItem(label: 'Trạng Thái Ticket', value: ticket.status.label, icon: Icons.flag_rounded),
-                  _ProfileDetailItem(label: 'Mã Phiên Chat', value: '#${ticket.number}', icon: Icons.tag_rounded),
+                  _ProfileDetailItem(
+                    label: 'Kênh Liên Hệ',
+                    value: ticket.source.label,
+                    icon: ticket.source.icon,
+                  ),
+                  _ProfileDetailItem(
+                    label: 'Ý Định Phân Loại',
+                    value: ticket.intent.label,
+                    icon: ticket.intent.icon,
+                  ),
+                  _ProfileDetailItem(
+                    label: 'Trạng Thái Ticket',
+                    value: ticket.status.label,
+                    icon: Icons.flag_rounded,
+                  ),
+                  _ProfileDetailItem(
+                    label: 'Mã Phiên Chat',
+                    value: '#${ticket.number}',
+                    icon: Icons.tag_rounded,
+                  ),
 
                   const SizedBox(height: 12),
                   const Divider(color: AppColors.slate200),
@@ -1534,7 +2109,11 @@ class _CustomerProfileSidebar extends StatelessWidget {
 
                   const Text(
                     'Tóm Tắt Yêu Cầu Của Khách:',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.slate600),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.slate600,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Container(
@@ -1547,14 +2126,22 @@ class _CustomerProfileSidebar extends StatelessWidget {
                     ),
                     child: Text(
                       ticket.summary,
-                      style: const TextStyle(fontSize: 11, color: AppColors.slate800, height: 1.4),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.slate800,
+                        height: 1.4,
+                      ),
                     ),
                   ),
 
                   const SizedBox(height: 14),
                   const Text(
                     'Thao Tác Nhanh Trạng Thái:',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.slate600),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.slate600,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Wrap(
@@ -1564,16 +2151,28 @@ class _CustomerProfileSidebar extends StatelessWidget {
                       OutlinedButton(
                         onPressed: () => onUpdateStatus('open'),
                         style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         child: const Text('Chờ Xử Lý'),
                       ),
                       OutlinedButton(
                         onPressed: () => onUpdateStatus('in_progress'),
                         style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         child: const Text('Đang Tư Vấn'),
                       ),
@@ -1581,8 +2180,14 @@ class _CustomerProfileSidebar extends StatelessWidget {
                         onPressed: () => onUpdateStatus('resolved'),
                         style: FilledButton.styleFrom(
                           backgroundColor: AppColors.success,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         child: const Text('Đã Hoàn Tất'),
                       ),
@@ -1617,9 +2222,28 @@ class _ProfileDetailItem extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: AppColors.slate400),
           const SizedBox(width: 6),
-          Text(label, style: const TextStyle(color: AppColors.slate500, fontSize: 11)),
-          const Spacer(),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 11, color: AppColors.slate900)),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.slate500, fontSize: 11),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+                color: AppColors.slate900,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1681,20 +2305,29 @@ class _WebReplyComposer extends StatelessWidget {
                     ),
                     if (isLoadingSuggestions) ...[
                       const SizedBox(width: 8),
-                      const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                      const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                     ],
                   ],
                 ),
                 const SizedBox(height: 8),
                 if (aiSuggestions.isEmpty)
-                  const Text('Đang phân tích tin nhắn để đưa ra gợi ý tối ưu...', style: TextStyle(fontSize: 11, color: AppColors.slate500))
+                  const Text(
+                    'Đang phân tích tin nhắn để đưa ra gợi ý tối ưu...',
+                    style: TextStyle(fontSize: 11, color: AppColors.slate500),
+                  )
                 else
                   Wrap(
                     spacing: 7,
                     runSpacing: 7,
                     children: aiSuggestions.map((sug) {
                       return _DraftButton(
-                        label: sug.length > 55 ? '${sug.substring(0, 52)}...' : sug,
+                        label: sug.length > 55
+                            ? '${sug.substring(0, 52)}...'
+                            : sug,
                         onTap: () => onFillDraft(sug),
                       );
                     }).toList(),
@@ -1710,7 +2343,8 @@ class _WebReplyComposer extends StatelessWidget {
                   controller: controller,
                   onSubmitted: (_) => onSend(),
                   decoration: InputDecoration(
-                    hintText: 'Nhập câu trả lời của nhân viên để gửi trực tiếp về Web Store...',
+                    hintText:
+                        'Nhập câu trả lời của nhân viên để gửi trực tiếp về Web Store...',
                     filled: true,
                     fillColor: Colors.white,
                     contentPadding: const EdgeInsets.symmetric(
@@ -1867,14 +2501,31 @@ class _AnalyticsDashboard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Phân Bổ Kênh Giao Tiếp Khách Hàng',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                          const Text(
+                            'Phân Bổ Kênh Giao Tiếp Khách Hàng',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                           const SizedBox(height: 14),
-                          _ChannelStatRow(label: 'Website Live Chat (SportGear Store)', percent: total > 0 ? (webCount / total) : 0.8, count: '$webCount tickets'),
+                          _ChannelStatRow(
+                            label: 'Website Live Chat (SportGear Store)',
+                            percent: total > 0 ? (webCount / total) : 0.8,
+                            count: '$webCount tickets',
+                          ),
                           const SizedBox(height: 10),
-                          _ChannelStatRow(label: 'Facebook Messenger Fanpage', percent: total > 0 ? (fbCount / total) : 0.1, count: '$fbCount tickets'),
+                          _ChannelStatRow(
+                            label: 'Facebook Messenger Fanpage',
+                            percent: total > 0 ? (fbCount / total) : 0.1,
+                            count: '$fbCount tickets',
+                          ),
                           const SizedBox(height: 10),
-                          _ChannelStatRow(label: 'Email Chăm Sóc Khách Hàng', percent: total > 0 ? (emailCount / total) : 0.1, count: '$emailCount tickets'),
+                          _ChannelStatRow(
+                            label: 'Email Chăm Sóc Khách Hàng',
+                            percent: total > 0 ? (emailCount / total) : 0.1,
+                            count: '$emailCount tickets',
+                          ),
                         ],
                       ),
                     ),
@@ -1888,13 +2539,31 @@ class _AnalyticsDashboard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Chỉ Số Vận Hành AI & Human Support',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                          const Text(
+                            'Chỉ Số Vận Hành AI & Human Support',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                           const SizedBox(height: 14),
-                          _DetailMetricRow(title: 'Tỷ lệ AI tự động giải quyết', value: '$aiPercent%'),
-                          _DetailMetricRow(title: 'Tỷ lệ Chuyển Nhân Viên Trực (Handoff)', value: '${(100 - aiPercent).toStringAsFixed(1)}%'),
-                          _DetailMetricRow(title: 'Tổng số Ticket đã xử lý thành công', value: '$resolved / $total tickets'),
-                          const _DetailMetricRow(title: 'Tỷ lệ giải quyết khiếu nại (Resolution Rate)', value: '100%'),
+                          _DetailMetricRow(
+                            title: 'Tỷ lệ AI tự động giải quyết',
+                            value: '$aiPercent%',
+                          ),
+                          _DetailMetricRow(
+                            title: 'Tỷ lệ Chuyển Nhân Viên Trực (Handoff)',
+                            value: '${(100 - aiPercent).toStringAsFixed(1)}%',
+                          ),
+                          _DetailMetricRow(
+                            title: 'Tổng số Ticket đã xử lý thành công',
+                            value: '$resolved / $total tickets',
+                          ),
+                          const _DetailMetricRow(
+                            title:
+                                'Tỷ lệ giải quyết khiếu nại (Resolution Rate)',
+                            value: '100%',
+                          ),
                         ],
                       ),
                     ),
@@ -1928,8 +2597,10 @@ class _ProductIssuesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final topIssues = (productIssues['top_product_issues'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    if (topIssues.isEmpty) return const SizedBox.shrink();
+    final topIssues = ((productIssues['top_product_issues'] as List?) ?? [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1939,25 +2610,46 @@ class _ProductIssuesSection extends StatelessWidget {
         children: [
           const Row(
             children: [
-              Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 20),
+              Icon(
+                Icons.warning_amber_rounded,
+                color: AppColors.danger,
+                size: 20,
+              ),
               SizedBox(width: 8),
-              Text('Sản Phẩm Bị Báo Lỗi Nhiều Nhất (Phân Tích Từ Dữ Liệu Thực)',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              Text(
+                'Sản Phẩm Bị Báo Lỗi Nhiều Nhất (Phân Tích Từ Dữ Liệu Thực)',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
               SizedBox(width: 8),
-              BadgeChip(label: 'THỜI GIAN THỰC', color: AppColors.danger, backgroundColor: AppColors.dangerSoft),
+              BadgeChip(
+                label: 'THỜI GIAN THỰC',
+                color: AppColors.danger,
+                backgroundColor: AppColors.dangerSoft,
+              ),
             ],
           ),
           const SizedBox(height: 4),
-          const Text('Dựa trên phân tích NLP từ nội dung chat của khách hàng — cập nhật theo từng ticket mới',
-              style: TextStyle(color: AppColors.slate500, fontSize: 12)),
+          const Text(
+            'Dựa trên phân tích NLP từ nội dung chat của khách hàng — cập nhật theo từng ticket mới',
+            style: TextStyle(color: AppColors.slate500, fontSize: 12),
+          ),
           const SizedBox(height: 16),
+          if (topIssues.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 14),
+              child: Text(
+                'Chưa có dữ liệu khiếu nại sản phẩm. Dashboard vẫn sẵn sàng hiển thị khi có ticket mới.',
+                style: TextStyle(color: AppColors.slate500, fontSize: 12),
+              ),
+            ),
           ...topIssues.asMap().entries.map((entry) {
             final idx = entry.key;
             final item = entry.value;
             final product = item['product']?.toString() ?? 'Sản phẩm';
             final count = (item['complaint_count'] as num?)?.toInt() ?? 0;
             final issues = (item['top_issues'] as List?)?.cast<String>() ?? [];
-            final maxCount = (topIssues.first['complaint_count'] as num?)?.toInt() ?? 1;
+            final maxCount =
+                (topIssues.first['complaint_count'] as num?)?.toInt() ?? 1;
             final ratio = maxCount > 0 ? count / maxCount : 0.0;
 
             return Padding(
@@ -1966,17 +2658,29 @@ class _ProductIssuesSection extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 28, height: 28,
+                    width: 28,
+                    height: 28,
                     decoration: BoxDecoration(
-                      color: idx == 0 ? AppColors.dangerSoft : (idx == 1 ? AppColors.warningSoft : AppColors.slate100),
+                      color: idx == 0
+                          ? AppColors.dangerSoft
+                          : (idx == 1
+                                ? AppColors.warningSoft
+                                : AppColors.slate100),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Center(
-                      child: Text('#${idx + 1}',
+                      child: Text(
+                        '#${idx + 1}',
                         style: TextStyle(
-                          fontWeight: FontWeight.w900, fontSize: 11,
-                          color: idx == 0 ? AppColors.danger : (idx == 1 ? AppColors.warning : AppColors.slate500),
-                        )),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 11,
+                          color: idx == 0
+                              ? AppColors.danger
+                              : (idx == 1
+                                    ? AppColors.warning
+                                    : AppColors.slate500),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1987,21 +2691,35 @@ class _ProductIssuesSection extends StatelessWidget {
                         Row(
                           children: [
                             Expanded(
-                              child: Text(product,
-                                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+                              child: Text(
+                                product,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                ),
+                              ),
                             ),
-                            Text('$count khiếu nại',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w900, fontSize: 12,
-                                  color: count > 3 ? AppColors.danger : AppColors.slate600,
-                                )),
+                            Text(
+                              '$count khiếu nại',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12,
+                                color: count > 3
+                                    ? AppColors.danger
+                                    : AppColors.slate600,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 5),
                         LinearProgressIndicator(
                           value: ratio.clamp(0.0, 1.0),
                           backgroundColor: AppColors.slate100,
-                          color: idx == 0 ? AppColors.danger : (idx == 1 ? AppColors.warning : AppColors.slate400),
+                          color: idx == 0
+                              ? AppColors.danger
+                              : (idx == 1
+                                    ? AppColors.warning
+                                    : AppColors.slate400),
                           minHeight: 6,
                           borderRadius: BorderRadius.circular(3),
                         ),
@@ -2010,16 +2728,32 @@ class _ProductIssuesSection extends StatelessWidget {
                           Wrap(
                             spacing: 5,
                             runSpacing: 5,
-                            children: issues.map((issue) => Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: AppColors.slate50,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: AppColors.slate200),
-                              ),
-                              child: Text(issue.length > 50 ? '${issue.substring(0, 47)}...' : issue,
-                                  style: const TextStyle(fontSize: 10, color: AppColors.slate600)),
-                            )).toList(),
+                            children: issues
+                                .map(
+                                  (issue) => Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 7,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.slate50,
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: AppColors.slate200,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      issue.length > 50
+                                          ? '${issue.substring(0, 47)}...'
+                                          : issue,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: AppColors.slate600,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
                           ),
                         ],
                       ],
@@ -2042,8 +2776,10 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gaps = (productIssues['ai_knowledge_gaps'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    if (gaps.isEmpty) return const SizedBox.shrink();
+    final gaps = ((productIssues['ai_knowledge_gaps'] as List?) ?? [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -2055,16 +2791,32 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
             children: [
               Icon(Icons.psychology_rounded, color: AppColors.indigo, size: 20),
               SizedBox(width: 8),
-              Text('Khoảng Trống Tri Thức AI (Những Gì AI Chưa Được Học)',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+              Text(
+                'Khoảng Trống Tri Thức AI (Những Gì AI Chưa Được Học)',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
               SizedBox(width: 8),
-              BadgeChip(label: 'CẦN BỔ SUNG TÀI LIỆU', color: AppColors.indigo, backgroundColor: AppColors.indigoSoft),
+              BadgeChip(
+                label: 'CẦN BỔ SUNG TÀI LIỆU',
+                color: AppColors.indigo,
+                backgroundColor: AppColors.indigoSoft,
+              ),
             ],
           ),
           const SizedBox(height: 4),
-          const Text('Các chủ đề khách hàng hỏi nhưng AI chưa có đủ kiến thức trả lời — Quản lý cần nạp thêm tài liệu tại Tab 3',
-              style: TextStyle(color: AppColors.slate500, fontSize: 12)),
+          const Text(
+            'Các chủ đề khách hàng hỏi nhưng AI chưa có đủ kiến thức trả lời — Quản lý cần nạp thêm tài liệu tại Tab 3',
+            style: TextStyle(color: AppColors.slate500, fontSize: 12),
+          ),
           const SizedBox(height: 16),
+          if (gaps.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 14),
+              child: Text(
+                'Chưa phát hiện khoảng trống tri thức mới. Tài liệu SportGear hiện đủ cho luồng demo.',
+                style: TextStyle(color: AppColors.slate500, fontSize: 12),
+              ),
+            ),
           ...gaps.map((gap) {
             final topic = gap['topic']?.toString() ?? 'Chủ đề';
             final count = (gap['query_count'] as num?)?.toInt() ?? 0;
@@ -2072,20 +2824,38 @@ class _AiKnowledgeGapsSection extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 10),
               child: Row(
                 children: [
-                  const Icon(Icons.help_outline_rounded, size: 16, color: AppColors.warning),
+                  const Icon(
+                    Icons.help_outline_rounded,
+                    size: 16,
+                    color: AppColors.warning,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(topic,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                    child: Text(
+                      topic,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.warningSoft,
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Text('$count câu hỏi chưa trả lời tốt',
-                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: AppColors.warning)),
+                    child: Text(
+                      '$count câu hỏi chưa trả lời tốt',
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.warning,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -2104,18 +2874,34 @@ class _AgentPerformanceSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (agentPerformance.isEmpty) return const SizedBox.shrink();
-
-    final botSecs = (agentPerformance['avg_bot_response_seconds'] as num?)?.toDouble() ?? 0.4;
-    final humanSecs = (agentPerformance['avg_human_response_seconds'] as num?)?.toDouble() ?? 185;
-    final ratio = agentPerformance['ai_vs_human_ratio']?.toString() ?? '91.5% AI / 8.5% Nhân Viên';
-    final totalTickets = (agentPerformance['total_tickets'] as num?)?.toInt() ?? 0;
-    final resolvedTickets = (agentPerformance['resolved_tickets'] as num?)?.toInt() ?? 0;
-    final resolutionRate = (agentPerformance['resolution_rate_percent'] as num?)?.toDouble() ?? 0;
-    final hourlyData = (agentPerformance['hourly_distribution'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    final topAgents = (agentPerformance['top_agents'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final botSecs =
+        (agentPerformance['avg_bot_response_seconds'] as num?)?.toDouble() ??
+        0.4;
+    final humanSecs =
+        (agentPerformance['avg_human_response_seconds'] as num?)?.toDouble() ??
+        185;
+    final ratio =
+        agentPerformance['ai_vs_human_ratio']?.toString() ??
+        '91.5% AI / 8.5% Nhân Viên';
+    final totalTickets =
+        (agentPerformance['total_tickets'] as num?)?.toInt() ?? 0;
+    final resolvedTickets =
+        (agentPerformance['resolved_tickets'] as num?)?.toInt() ?? 0;
+    final resolutionRate =
+        (agentPerformance['resolution_rate_percent'] as num?)?.toDouble() ?? 0;
+    final hourlyData =
+        ((agentPerformance['hourly_distribution'] as List?) ?? [])
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+    final topAgents = ((agentPerformance['top_agents'] as List?) ?? [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
     final humanMin = (humanSecs / 60).toStringAsFixed(1);
-    final botLabel = botSecs < 1 ? '${(botSecs * 1000).toInt()} ms' : '${botSecs.toStringAsFixed(1)}s';
+    final botLabel = botSecs < 1
+        ? '${(botSecs * 1000).toInt()} ms'
+        : '${botSecs.toStringAsFixed(1)}s';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2124,8 +2910,10 @@ class _AgentPerformanceSection extends StatelessWidget {
           children: [
             Icon(Icons.speed_rounded, color: AppColors.success, size: 20),
             SizedBox(width: 8),
-            Text('Hiệu Suất Phản Hồi: AI Bot vs Nhân Viên CSKH',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+            Text(
+              'Hiệu Suất Phản Hồi: AI Bot vs Nhân Viên CSKH',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
           ],
         ),
         const SizedBox(height: 14),
@@ -2180,11 +2968,15 @@ class _AgentPerformanceSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Phân Bổ Ticket Theo Khung Giờ Trong Ngày',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+                const Text(
+                  'Phân Bổ Ticket Theo Khung Giờ Trong Ngày',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+                ),
                 const SizedBox(height: 4),
-                const Text('Giúp lên lịch trực ca nhân viên tối ưu theo giờ cao điểm',
-                    style: TextStyle(fontSize: 11, color: AppColors.slate500)),
+                const Text(
+                  'Giúp lên lịch trực ca nhân viên tối ưu theo giờ cao điểm',
+                  style: TextStyle(fontSize: 11, color: AppColors.slate500),
+                ),
                 const SizedBox(height: 14),
                 SizedBox(
                   height: 100,
@@ -2192,8 +2984,12 @@ class _AgentPerformanceSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: hourlyData.map((hd) {
                       final count = (hd['count'] as num?)?.toInt() ?? 0;
-                      final maxCount = hourlyData.map((h) => (h['count'] as num?)?.toInt() ?? 0).reduce((a, b) => a > b ? a : b);
-                      final barHeight = maxCount > 0 ? (count / maxCount * 80.0) : 4.0;
+                      final maxCount = hourlyData
+                          .map((h) => (h['count'] as num?)?.toInt() ?? 0)
+                          .reduce((a, b) => a > b ? a : b);
+                      final barHeight = maxCount > 0
+                          ? (count / maxCount * 80.0)
+                          : 4.0;
                       final isPeak = count == maxCount;
                       return Expanded(
                         child: Padding(
@@ -2201,21 +2997,39 @@ class _AgentPerformanceSection extends StatelessWidget {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              Text('$count', style: TextStyle(
-                                fontSize: 9, fontWeight: FontWeight.bold,
-                                color: isPeak ? AppColors.primary : AppColors.slate400,
-                              )),
+                              Text(
+                                '$count',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  color: isPeak
+                                      ? AppColors.primary
+                                      : AppColors.slate400,
+                                ),
+                              ),
                               const SizedBox(height: 2),
                               Container(
                                 height: barHeight.clamp(4.0, 80.0),
                                 decoration: BoxDecoration(
-                                  color: isPeak ? AppColors.primary : AppColors.primarySoft,
+                                  color: isPeak
+                                      ? AppColors.primary
+                                      : AppColors.primarySoft,
                                   borderRadius: BorderRadius.circular(3),
-                                  border: Border.all(color: isPeak ? AppColors.primary : AppColors.slate200),
+                                  border: Border.all(
+                                    color: isPeak
+                                        ? AppColors.primary
+                                        : AppColors.slate200,
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              Text(hd['hour']?.toString() ?? '', style: const TextStyle(fontSize: 8.5, color: AppColors.slate400)),
+                              Text(
+                                hd['hour']?.toString() ?? '',
+                                style: const TextStyle(
+                                  fontSize: 8.5,
+                                  color: AppColors.slate400,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -2235,8 +3049,10 @@ class _AgentPerformanceSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Top Nhân Viên CSKH Hiệu Suất Cao Nhất',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+                const Text(
+                  'Top Nhân Viên CSKH Hiệu Suất Cao Nhất',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+                ),
                 const SizedBox(height: 12),
                 ...topAgents.asMap().entries.map((entry) {
                   final idx = entry.key;
@@ -2248,13 +3064,24 @@ class _AgentPerformanceSection extends StatelessWidget {
                         CircleAvatar(
                           radius: 14,
                           backgroundColor: AppColors.primarySoft,
-                          child: Text('${idx + 1}',
-                            style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 11)),
+                          child: Text(
+                            '${idx + 1}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary,
+                              fontSize: 11,
+                            ),
+                          ),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
-                          child: Text(agent['name']?.toString() ?? '',
-                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                          child: Text(
+                            agent['name']?.toString() ?? '',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
                         ),
                         _DetailMetricRow(
                           title: '${agent["tickets_handled"]} tickets',
@@ -2303,11 +3130,28 @@ class _MetricCompareCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(label, style: const TextStyle(color: AppColors.slate500, fontSize: 11, fontWeight: FontWeight.bold)),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.slate500,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 4),
-          Text(value, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w900)),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
           const SizedBox(height: 2),
-          Text(note, style: const TextStyle(color: AppColors.slate400, fontSize: 10.5)),
+          Text(
+            note,
+            style: const TextStyle(color: AppColors.slate400, fontSize: 10.5),
+          ),
         ],
       ),
     );
@@ -2341,15 +3185,36 @@ class _OwnerMetricCard extends StatelessWidget {
             children: [
               Icon(icon, color: color, size: 24),
               const Spacer(),
-              BadgeChip(label: 'THÁNG NÀY', color: color, backgroundColor: color.withValues(alpha: 0.1)),
+              BadgeChip(
+                label: 'THÁNG NÀY',
+                color: color,
+                backgroundColor: color.withValues(alpha: 0.1),
+              ),
             ],
           ),
           const SizedBox(height: 12),
-          Text(label, style: const TextStyle(color: AppColors.slate500, fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.slate500,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 4),
-          Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
           const SizedBox(height: 4),
-          Text(note, style: const TextStyle(color: AppColors.slate400, fontSize: 11)),
+          Text(
+            note,
+            style: const TextStyle(color: AppColors.slate400, fontSize: 11),
+          ),
         ],
       ),
     );
@@ -2357,7 +3222,11 @@ class _OwnerMetricCard extends StatelessWidget {
 }
 
 class _ChannelStatRow extends StatelessWidget {
-  const _ChannelStatRow({required this.label, required this.percent, required this.count});
+  const _ChannelStatRow({
+    required this.label,
+    required this.percent,
+    required this.count,
+  });
 
   final String label;
   final double percent;
@@ -2371,8 +3240,18 @@ class _ChannelStatRow extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-            Text(count, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w900, fontSize: 13)),
+            Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            Text(
+              count,
+              style: const TextStyle(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w900,
+                fontSize: 13,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 6),
@@ -2401,8 +3280,22 @@ class _DetailMetricRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(title, style: const TextStyle(color: AppColors.slate600, fontSize: 13, fontWeight: FontWeight.w600)),
-          Text(value, style: const TextStyle(color: AppColors.slate900, fontSize: 14, fontWeight: FontWeight.w900)),
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppColors.slate600,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: AppColors.slate900,
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
         ],
       ),
     );
@@ -2448,12 +3341,18 @@ class _AdminManagementDashboard extends StatelessWidget {
                     children: [
                       Text(
                         '1. Quản Trị Nhân Sự & Phân Quyền Trực Ca',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                       SizedBox(height: 3),
                       Text(
                         'Thêm mới, phân quyền và quản lý trạng thái trực tuyến của nhân viên tư vấn',
-                        style: TextStyle(color: AppColors.slate500, fontSize: 12),
+                        style: TextStyle(
+                          color: AppColors.slate500,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -2462,8 +3361,13 @@ class _AdminManagementDashboard extends StatelessWidget {
                     icon: const Icon(Icons.person_add_rounded, size: 17),
                     label: const Text('Thêm Nhân Viên Mới'),
                     style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                   ),
                 ],
@@ -2476,11 +3380,36 @@ class _AdminManagementDashboard extends StatelessWidget {
                 child: DataTable(
                   headingRowColor: WidgetStateProperty.all(AppColors.slate100),
                   columns: const [
-                    DataColumn(label: Text('Họ và Tên', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Email Đăng Nhập', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Vai Trò', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Trạng Thái Trực', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Thao Tác', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(
+                      label: Text(
+                        'Họ và Tên',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    DataColumn(
+                      label: Text(
+                        'Email Đăng Nhập',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    DataColumn(
+                      label: Text(
+                        'Vai Trò',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    DataColumn(
+                      label: Text(
+                        'Trạng Thái Trực',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    DataColumn(
+                      label: Text(
+                        'Thao Tác',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ],
                   rows: staffList.map((staff) {
                     final id = staff['id']?.toString() ?? '';
@@ -2498,19 +3427,39 @@ class _AdminManagementDashboard extends StatelessWidget {
                               CircleAvatar(
                                 radius: 14,
                                 backgroundColor: AppColors.primarySoft,
-                                child: Text(name.isNotEmpty ? name[0] : 'U', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 12)),
+                                child: Text(
+                                  name.isNotEmpty ? name[0] : 'U',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: AppColors.primary,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ),
                               const SizedBox(width: 10),
-                              Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text(
+                                name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ],
                           ),
                         ),
                         DataCell(Text(email)),
                         DataCell(
                           BadgeChip(
-                            label: role == 'super_admin' ? 'CHỦ SHOP (SUPER ADMIN)' : (role == 'senior_agent' ? 'TRƯỞNG CA (SENIOR)' : 'NHÂN VIÊN (AGENT)'),
-                            color: role == 'super_admin' ? AppColors.danger : AppColors.primary,
-                            backgroundColor: role == 'super_admin' ? AppColors.dangerSoft : AppColors.primarySoft,
+                            label: role == 'super_admin'
+                                ? 'CHỦ SHOP (SUPER ADMIN)'
+                                : (role == 'senior_agent'
+                                      ? 'TRƯỞNG CA (SENIOR)'
+                                      : 'NHÂN VIÊN (AGENT)'),
+                            color: role == 'super_admin'
+                                ? AppColors.danger
+                                : AppColors.primary,
+                            backgroundColor: role == 'super_admin'
+                                ? AppColors.dangerSoft
+                                : AppColors.primarySoft,
                           ),
                         ),
                         DataCell(
@@ -2518,16 +3467,28 @@ class _AdminManagementDashboard extends StatelessWidget {
                             onTap: () => onToggleStatus(id, status),
                             borderRadius: BorderRadius.circular(6),
                             child: BadgeChip(
-                              label: isOnline ? 'ĐANG TRỰC ONLINE' : 'ĐÃ NGHỈ CA (OFFLINE)',
-                              color: isOnline ? AppColors.success : AppColors.slate500,
-                              backgroundColor: isOnline ? AppColors.successSoft : AppColors.slate100,
-                              icon: isOnline ? Icons.circle : Icons.circle_outlined,
+                              label: isOnline
+                                  ? 'ĐANG TRỰC ONLINE'
+                                  : 'ĐÃ NGHỈ CA (OFFLINE)',
+                              color: isOnline
+                                  ? AppColors.success
+                                  : AppColors.slate500,
+                              backgroundColor: isOnline
+                                  ? AppColors.successSoft
+                                  : AppColors.slate100,
+                              icon: isOnline
+                                  ? Icons.circle
+                                  : Icons.circle_outlined,
                             ),
                           ),
                         ),
                         DataCell(
                           IconButton(
-                            icon: const Icon(Icons.delete_outline_rounded, color: AppColors.danger, size: 20),
+                            icon: const Icon(
+                              Icons.delete_outline_rounded,
+                              color: AppColors.danger,
+                              size: 20,
+                            ),
                             tooltip: 'Xóa nhân viên',
                             onPressed: () => onDeleteStaff(id, name),
                           ),
@@ -2551,7 +3512,10 @@ class _AdminManagementDashboard extends StatelessWidget {
                         children: [
                           Text(
                             '2. Quản Lý Bộ Tri Thức AI Bot (ChromaDB Knowledge Base)',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
                           SizedBox(width: 8),
                           BadgeChip(
@@ -2564,7 +3528,10 @@ class _AdminManagementDashboard extends StatelessWidget {
                       SizedBox(height: 3),
                       Text(
                         'Nạp tài liệu chính sách, sản phẩm, bảng giá để AI Bot tự động học và trả lời khách hàng 24/7',
-                        style: TextStyle(color: AppColors.slate500, fontSize: 12),
+                        style: TextStyle(
+                          color: AppColors.slate500,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
@@ -2574,8 +3541,13 @@ class _AdminManagementDashboard extends StatelessWidget {
                     label: const Text('Nạp Tài Liệu Mới Vào ChromaDB'),
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.indigo,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                   ),
                 ],
@@ -2591,11 +3563,18 @@ class _AdminManagementDashboard extends StatelessWidget {
                   children: [
                     const Row(
                       children: [
-                        Icon(Icons.auto_awesome, color: AppColors.indigo, size: 20),
+                        Icon(
+                          Icons.auto_awesome,
+                          color: AppColors.indigo,
+                          size: 20,
+                        ),
                         SizedBox(width: 8),
                         Text(
                           'Danh Sách Tài Liệu Đã Được Vector Indexing Trong ChromaDB:',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ],
                     ),
@@ -2603,13 +3582,19 @@ class _AdminManagementDashboard extends StatelessWidget {
                     documentsList.isEmpty
                         ? const Padding(
                             padding: EdgeInsets.all(16),
-                            child: Center(child: Text('Chưa có tài liệu nào.', style: TextStyle(color: AppColors.slate400))),
+                            child: Center(
+                              child: Text(
+                                'Chưa có tài liệu nào.',
+                                style: TextStyle(color: AppColors.slate400),
+                              ),
+                            ),
                           )
                         : ListView.separated(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: documentsList.length,
-                            separatorBuilder: (ctx, idx) => const SizedBox(height: 8),
+                            separatorBuilder: (ctx, idx) =>
+                                const SizedBox(height: 8),
                             itemBuilder: (ctx, idx) {
                               final doc = documentsList[idx];
                               final id = doc['id']?.toString() ?? '';
@@ -2691,7 +3676,11 @@ class _AdminDocumentRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           IconButton(
-            icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppColors.danger),
+            icon: const Icon(
+              Icons.delete_outline_rounded,
+              size: 18,
+              color: AppColors.danger,
+            ),
             onPressed: onDelete,
             tooltip: 'Xóa tài liệu khỏi ChromaDB',
           ),
@@ -2778,12 +3767,16 @@ class BadgeChip extends StatelessWidget {
             Icon(icon, size: 12, color: color),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w900,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -2802,7 +3795,6 @@ class ChatBubble extends StatelessWidget {
     // Khách hàng & AI Bot: căn TRÁI (bubble màu nhạt)
     // Nhân viên CSKH: căn PHẢI (bubble màu xanh đậm)
     final isHuman = message.sender == SenderType.human;
-    final isCustomer = message.sender == SenderType.customer;
     final isBot = message.sender == SenderType.bot;
 
     // Nhân viên → phải; Khách hàng & Bot → trái
@@ -2838,23 +3830,35 @@ class ChatBubble extends StatelessWidget {
           ),
           border: Border.all(color: borderColor),
           boxShadow: const [
-            BoxShadow(color: Color(0x06000000), blurRadius: 4, offset: Offset(0, 2)),
+            BoxShadow(
+              color: Color(0x06000000),
+              blurRadius: 4,
+              offset: Offset(0, 2),
+            ),
           ],
         ),
         child: Column(
-          crossAxisAlignment: alignRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: alignRight
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (!alignRight) ...[
-                  Icon(message.sender.icon, size: 12, color: isBot ? AppColors.primary : AppColors.slate400),
+                  Icon(
+                    message.sender.icon,
+                    size: 12,
+                    color: isBot ? AppColors.primary : AppColors.slate400,
+                  ),
                   const SizedBox(width: 4),
                 ],
                 Text(
                   message.sender.label,
                   style: TextStyle(
-                    color: isHuman ? Colors.white70 : (isBot ? AppColors.primary : AppColors.slate400),
+                    color: isHuman
+                        ? Colors.white70
+                        : (isBot ? AppColors.primary : AppColors.slate400),
                     fontSize: 9.5,
                     fontWeight: FontWeight.w900,
                   ),
@@ -2894,9 +3898,24 @@ BoxDecoration cardDecoration({Color borderColor = AppColors.slate200}) {
 }
 
 enum TicketSource {
-  web('Web Store', Icons.language_rounded, AppColors.primary, AppColors.primarySoft),
-  facebook('Facebook', Icons.facebook_rounded, AppColors.indigo, AppColors.indigoSoft),
-  email('Email', Icons.mail_outline_rounded, AppColors.success, AppColors.successSoft);
+  web(
+    'Web Store',
+    Icons.language_rounded,
+    AppColors.primary,
+    AppColors.primarySoft,
+  ),
+  facebook(
+    'Facebook',
+    Icons.facebook_rounded,
+    AppColors.indigo,
+    AppColors.indigoSoft,
+  ),
+  email(
+    'Email',
+    Icons.mail_outline_rounded,
+    AppColors.success,
+    AppColors.successSoft,
+  );
 
   const TicketSource(this.label, this.icon, this.color, this.softColor);
   final String label;
@@ -2918,8 +3937,18 @@ enum TicketStatus {
 }
 
 enum TicketIntent {
-  question('Tư Vấn FAQ', Icons.help_outline_rounded, AppColors.primary, AppColors.primarySoft),
-  complaint('Khiếu Nại / Đổi Trả', Icons.report_problem_rounded, AppColors.danger, AppColors.dangerSoft),
+  question(
+    'Tư Vấn FAQ',
+    Icons.help_outline_rounded,
+    AppColors.primary,
+    AppColors.primarySoft,
+  ),
+  complaint(
+    'Khiếu Nại / Đổi Trả',
+    Icons.report_problem_rounded,
+    AppColors.danger,
+    AppColors.dangerSoft,
+  ),
   spam('Spam', Icons.block_rounded, AppColors.slate500, AppColors.slate100);
 
   const TicketIntent(this.label, this.icon, this.color, this.softColor);
@@ -2962,13 +3991,50 @@ class SupportTicket {
   final String createdAgo;
   final List<TicketMessage> messages;
   final String ticketId;
+
+  SupportTicket copyWith({
+    int? number,
+    String? customerName,
+    TicketSource? source,
+    TicketStatus? status,
+    TicketIntent? intent,
+    String? summary,
+    String? createdAgo,
+    List<TicketMessage>? messages,
+    String? ticketId,
+  }) {
+    return SupportTicket(
+      number: number ?? this.number,
+      customerName: customerName ?? this.customerName,
+      source: source ?? this.source,
+      status: status ?? this.status,
+      intent: intent ?? this.intent,
+      summary: summary ?? this.summary,
+      createdAgo: createdAgo ?? this.createdAgo,
+      messages: messages ?? this.messages,
+      ticketId: ticketId ?? this.ticketId,
+    );
+  }
 }
 
 class TicketMessage {
-  const TicketMessage({required this.sender, required this.content});
+  const TicketMessage({
+    required this.sender,
+    required this.content,
+    this.id,
+    this.createdAt,
+  });
 
   final SenderType sender;
   final String content;
+  final String? id;
+  final String? createdAt;
+
+  String get dedupeKey {
+    final dbId = id;
+    if (dbId != null && dbId.isNotEmpty) return 'id:$dbId';
+    return '${sender.index}:${content.trim()}:${createdAt ?? ''}';
+  }
 }
 
 class AppColors {
@@ -3001,17 +4067,20 @@ final List<SupportTicket> initialDemoTickets = [
     source: TicketSource.web,
     status: TicketStatus.open,
     intent: TicketIntent.complaint,
-    summary: 'Sản phẩm áo Polo bị lỗi rách chỉ ở nách, khách yêu cầu đổi ngay trong ngày.',
+    summary:
+        'Sản phẩm áo Polo bị lỗi rách chỉ ở nách, khách yêu cầu đổi ngay trong ngày.',
     createdAgo: 'Vừa xong',
     ticketId: 'ticket_demo_102',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Chào shop, áo Polo Pro Active mình mới nhận bị rách chỉ ở phần nách, shop đổi mới giúp mình nhé!',
+        content:
+            'Chào shop, áo Polo Pro Active mình mới nhận bị rách chỉ ở phần nách, shop đổi mới giúp mình nhé!',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content: 'Dạ SportGear rất tiếc về sự cố này ạ! Em đã tạo Ticket ưu tiên #102 và chuyển trực tiếp cho Chuyên viên CSKH hỗ trợ đổi mới 1-1 tận nhà miễn phí trong 30 ngày cho bạn ngay ạ!',
+        content:
+            'Dạ SportGear rất tiếc về sự cố này ạ! Em đã tạo Ticket ưu tiên #102 và chuyển trực tiếp cho Chuyên viên CSKH hỗ trợ đổi mới 1-1 tận nhà miễn phí trong 30 ngày cho bạn ngay ạ!',
       ),
     ],
   ),
@@ -3021,21 +4090,25 @@ final List<SupportTicket> initialDemoTickets = [
     source: TicketSource.facebook,
     status: TicketStatus.inProgress,
     intent: TicketIntent.question,
-    summary: 'Tư vấn chọn size giày chạy bộ Ultra Boost 2026 cho người chân bè.',
+    summary:
+        'Tư vấn chọn size giày chạy bộ Ultra Boost 2026 cho người chân bè.',
     createdAgo: '12 phút trước',
     ticketId: 'ticket_demo_103',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Giày Ultra Boost 2026 chân bè ngang 10cm thì nên đi size 42 hay 43 shop?',
+        content:
+            'Giày Ultra Boost 2026 chân bè ngang 10cm thì nên đi size 42 hay 43 shop?',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content: 'Dạ với form chân bè ngang, bạn nên tăng 1 size lên 43 để mũi giày ôm chân êm ái và không bị tức ngón khi chạy bộ cự ly dài nhé!',
+        content:
+            'Dạ với form chân bè ngang, bạn nên tăng 1 size lên 43 để mũi giày ôm chân êm ái và không bị tức ngón khi chạy bộ cự ly dài nhé!',
       ),
       TicketMessage(
         sender: SenderType.human,
-        content: 'Dạ em Tuấn CSKH xin gửi bạn bảng đo cm chân chi tiết để chọn size chuẩn nhất ạ.',
+        content:
+            'Dạ em Tuấn CSKH xin gửi bạn bảng đo cm chân chi tiết để chọn size chuẩn nhất ạ.',
       ),
     ],
   ),
@@ -3045,17 +4118,20 @@ final List<SupportTicket> initialDemoTickets = [
     source: TicketSource.email,
     status: TicketStatus.open,
     intent: TicketIntent.question,
-    summary: 'Hỏi điều kiện miễn phí vận chuyển toàn quốc và mã giảm giá đơn 1 triệu.',
+    summary:
+        'Hỏi điều kiện miễn phí vận chuyển toàn quốc và mã giảm giá đơn 1 triệu.',
     createdAgo: '30 phút trước',
     ticketId: 'ticket_demo_104',
     messages: [
       TicketMessage(
         sender: SenderType.customer,
-        content: 'Shop cho mình hỏi đơn hàng trên 1 triệu có được freeship và tặng quà gì không?',
+        content:
+            'Shop cho mình hỏi đơn hàng trên 1 triệu có được freeship và tặng quà gì không?',
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content: 'Dạ mọi đơn hàng từ 500.000đ đều được FREESHIP 100% toàn quốc. Đơn từ 1.000.000đ shop tặng thêm 01 bình giữ nhiệt thể thao Inox 304 cao cấp ạ!',
+        content:
+            'Dạ mọi đơn hàng từ 500.000đ đều được FREESHIP 100% toàn quốc. Đơn từ 1.000.000đ shop tặng thêm 01 bình giữ nhiệt thể thao Inox 304 cao cấp ạ!',
       ),
     ],
   ),
@@ -3065,7 +4141,8 @@ final List<SupportTicket> initialDemoTickets = [
     source: TicketSource.web,
     status: TicketStatus.resolved,
     intent: TicketIntent.question,
-    summary: 'Đã tư vấn bảng size quần Gym Flex và khách đã đặt hàng thành công.',
+    summary:
+        'Đã tư vấn bảng size quần Gym Flex và khách đã đặt hàng thành công.',
     createdAgo: '1 giờ trước',
     ticketId: 'ticket_demo_101',
     messages: [
@@ -3075,7 +4152,8 @@ final List<SupportTicket> initialDemoTickets = [
       ),
       TicketMessage(
         sender: SenderType.bot,
-        content: 'Dạ theo bảng size chuẩn SportGear, anh chọn size L (69-76kg) sẽ vừa vặn và thoải mái nhất khi tập gym ạ!',
+        content:
+            'Dạ theo bảng size chuẩn SportGear, anh chọn size L (69-76kg) sẽ vừa vặn và thoải mái nhất khi tập gym ạ!',
       ),
       TicketMessage(
         sender: SenderType.customer,
