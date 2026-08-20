@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 # Urgency → tiêu đề thông báo
 _URGENCY_TITLES = {
-    3: "🚨 Khẩn! Khách hàng cần hỗ trợ ngay",
-    2: "⚠️ Có khiếu nại mới cần xử lý",
-    1: "📩 Tin nhắn mới cần xem xét",
+    3: "🚨 Urgent: customer needs immediate support",
+    2: "⚠️ New complaint needs attention",
+    1: "📩 New message needs review",
 }
 
 

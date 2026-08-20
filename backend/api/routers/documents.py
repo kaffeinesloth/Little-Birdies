@@ -13,6 +13,12 @@ ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocume
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE_MB = 10
 
+MIME_BY_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
+}
+
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://ai-service:8001")
 
 
@@ -29,10 +35,12 @@ async def list_demo_documents():
                 raw_docs = ai_res.json().get("documents", [])
                 for d in raw_docs:
                     if d.get("status") == "DONE":
+                        file_name = d.get("file_name") or "document.txt"
+                        file_extension = os.path.splitext(file_name)[1].lower()
                         docs.append({
                             "id": d.get("id"),
-                            "name": d.get("file_name"),
-                            "file_type": "txt",
+                            "name": file_name,
+                            "file_type": file_extension.lstrip(".") or "txt",
                             "embedding_status": "completed",
                             "chunk_count": d.get("chunks_count", 6),
                             "created_at": d.get("created_at"),
@@ -50,7 +58,7 @@ async def list_demo_documents():
     if not final_list:
         final_list = [{
             "id": "doc_default_sportgear",
-            "name": "sportgear_store.txt (6 Sản Phẩm & Chính Sách CSKH)",
+            "name": "sportgear_store.txt (6 Products & Support Policies)",
             "file_type": "txt",
             "embedding_status": "completed",
             "chunk_count": 19,
@@ -73,14 +81,13 @@ async def upload_demo_document(file: UploadFile = File(...)):
     if ext.lower() not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Chỉ hỗ trợ định dạng PDF, DOCX, TXT. Nhận được: {ext}",
+            detail=f"Only PDF, DOCX, and TXT are supported. Received: {ext}",
         )
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(status_code=400, detail=f"File vượt quá giới hạn {MAX_FILE_SIZE_MB}MB.")
+        raise HTTPException(status_code=400, detail=f"File exceeds the {MAX_FILE_SIZE_MB} MB limit.")
 
-    doc_id = str(uuid4())
     file_type_map = {".pdf": "pdf", ".docx": "docx", ".txt": "txt"}
     file_type = file_type_map.get(ext.lower(), "txt")
 
@@ -90,27 +97,36 @@ async def upload_demo_document(file: UploadFile = File(...)):
             ai_res = await client.post(
                 f"{AI_SERVICE_URL}/knowledge/upload",
                 params={"tenant_id": "default"},
-                files={"file": (file.filename, content, file.content_type or "text/plain")},
+                files={"file": (file.filename, content, MIME_BY_EXTENSION[ext.lower()])},
             )
     except Exception as e:
         print(f"Error forwarding to AI Service: {e}")
+        raise HTTPException(status_code=502, detail="AI knowledge service is unavailable")
 
-    # 2. Lưu vào Supabase documents table
-    supabase = get_supabase_admin()
+    if ai_res.status_code < 200 or ai_res.status_code >= 300:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI knowledge indexing failed: {ai_res.text[:200]}",
+        )
+    ai_payload = ai_res.json()
+    doc_id = ai_payload.get("doc_id") or str(uuid4())
+
+    # 2. Lưu vào Supabase documents table nếu cấu hình demo có sẵn.
     new_doc = {
         "id": doc_id,
-        "name": file.filename or "Tai_Lieu_Moi.txt",
+        "name": file.filename or "new_knowledge.txt",
         "file_type": file_type,
         "embedding_status": "completed",
         "chunk_count": max(4, len(content) // 256),
     }
     try:
+        supabase = get_supabase_admin()
         supabase.table("documents").insert(new_doc).execute()
     except Exception as e:
         print(f"Error saving to supabase: {e}")
 
     return APIResponse(
-        meta=MetaResponse(code=201, message=f"Đã tải lên và Indexing tài liệu '{file.filename}' thành công!"),
+        meta=MetaResponse(code=201, message=f"Document '{file.filename}' uploaded and indexed successfully."),
         data=new_doc,
     )
 
@@ -118,11 +134,11 @@ async def upload_demo_document(file: UploadFile = File(...)):
 @router.delete("/demo-delete/{doc_id}", response_model=APIResponse)
 async def delete_demo_document(doc_id: str):
     """Xóa tài liệu khỏi database và ChromaDB"""
-    supabase = get_supabase_admin()
     try:
+        supabase = get_supabase_admin()
         supabase.table("documents").delete().eq("id", doc_id).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error deleting document from supabase: {e}")
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -134,7 +150,7 @@ async def delete_demo_document(doc_id: str):
         pass
 
     return APIResponse(
-        meta=MetaResponse(code=200, message="Đã xóa tài liệu khỏi Knowledge Base."),
+        meta=MetaResponse(code=200, message="Document removed from the knowledge base."),
         data={"id": doc_id},
     )
 
@@ -181,7 +197,7 @@ async def upload_document(
     if ext.lower() not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Chỉ hỗ trợ file PDF, DOCX, TXT. Nhận được: {ext}",
+            detail=f"Only PDF, DOCX, and TXT are supported. Received: {ext}",
         )
 
     # Validate file size
@@ -190,7 +206,7 @@ async def upload_document(
     if size_mb > MAX_FILE_SIZE_MB:
         raise HTTPException(
             status_code=400,
-            detail=f"File vượt quá giới hạn {MAX_FILE_SIZE_MB}MB.",
+            detail=f"File exceeds the {MAX_FILE_SIZE_MB} MB limit.",
         )
 
     supabase = get_supabase_client()
@@ -207,7 +223,7 @@ async def upload_document(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Upload file thất bại: {str(e)}",
+            detail=f"File upload failed: {str(e)}",
         )
 
     # Map extension → file_type enum
@@ -228,7 +244,7 @@ async def upload_document(
     )
 
     if not doc_result.data:
-        raise HTTPException(status_code=500, detail="Không thể lưu thông tin tài liệu.")
+        raise HTTPException(status_code=500, detail="Could not save document information.")
 
     document_id = doc_result.data[0]["id"]
 
@@ -248,7 +264,7 @@ async def upload_document(
         pass
 
     return APIResponse(
-        meta=MetaResponse(code=202, message="Tài liệu đang được xử lý."),
+        meta=MetaResponse(code=202, message="Document is being processed."),
         data={"document_id": document_id, "status": EmbeddingStatus.processing.value},
     )
 
@@ -271,7 +287,7 @@ def delete_document(
     )
 
     if not doc.data:
-        raise HTTPException(status_code=404, detail="Tài liệu không tồn tại.")
+        raise HTTPException(status_code=404, detail="Document not found.")
 
     # Xóa record trong DB
     supabase.table("documents").delete().eq("id", str(document_id)).execute()
@@ -279,6 +295,6 @@ def delete_document(
     # TODO: Xóa vector embeddings trong ChromaDB (gọi AI service)
 
     return APIResponse(
-        meta=MetaResponse(code=200, message="Tài liệu đã được xóa."),
+        meta=MetaResponse(code=200, message="Document deleted."),
         data=None,
     )

@@ -11,6 +11,18 @@ from functools import lru_cache
 from config import settings
 
 
+@lru_cache(maxsize=1)
+def get_demo_fallback_orchestrator():
+    from agent.demo_fallback import create_demo_fallback_orchestrator
+    return create_demo_fallback_orchestrator()
+
+
+@lru_cache(maxsize=1)
+def get_local_ollama_orchestrator():
+    from agent.local_ollama import LocalOllamaOrchestrator
+    return LocalOllamaOrchestrator()
+
+
 # ── Singletons (heavy objects — khởi tạo 1 lần) ─────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -59,15 +71,24 @@ async def get_orchestrator():
     from services.ticket     import TicketService
     from services.notify     import NotifyService
 
-    db = await get_db()
-    return AgentOrchestrator(
-        classifier=get_intent_classifier(),
-        rag_pipeline=get_rag_pipeline(),
-        ticket_svc=TicketService(db),
-        notify_svc=NotifyService(db),
-        conv_mgr=ConversationManager(db),
-        db=db,
-    )
+    if settings.ai_provider.lower() in {"auto", "ollama"}:
+        return get_local_ollama_orchestrator()
+
+    if not settings.supabase_url or not settings.supabase_service_key:
+        return get_demo_fallback_orchestrator()
+
+    try:
+        db = await get_db()
+        return AgentOrchestrator(
+            classifier=get_intent_classifier(),
+            rag_pipeline=get_rag_pipeline(),
+            ticket_svc=TicketService(db),
+            notify_svc=NotifyService(db),
+            conv_mgr=ConversationManager(db),
+            db=db,
+        )
+    except Exception:
+        return get_demo_fallback_orchestrator()
 
 
 async def get_indexer():

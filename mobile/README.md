@@ -1,10 +1,16 @@
-# mobile
+# Smart Helpdesk Unified Staff App
 
-A new Flutter project.
+This Flutter project is the single staff application for web, Android, and iOS. It provides the shared ticket inbox, customer conversation, reports, demo roles, staff management, and local knowledge management with adaptive layouts.
 
-## Getting Started
+Docker builds its web target for `http://localhost:8080`. Native builds must receive the backend address at build time:
 
-This project is a starting point for a Flutter application.
+```powershell
+flutter build apk --release `
+  --dart-define=API_BASE_URL=http://192.168.1.50:8000 `
+  --dart-define=AI_BASE_URL=http://192.168.1.50:8001
+```
+
+See [../docs/UNIFIED_DEMO_SETUP.md](../docs/UNIFIED_DEMO_SETUP.md) for the complete presenter setup.
 
 A few resources to get you started if this is your first Flutter project:
 

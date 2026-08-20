@@ -175,8 +175,8 @@ class TestResponseGenerator:
         with patch("rag.generator.genai.Client"):
             gen = ResponseGenerator(api_key="fake")
         mock_resp = MagicMock()
-        mock_resp.output_text = llm_reply
-        gen._client.aio.interactions.create = AsyncMock(return_value=mock_resp)
+        mock_resp.text = llm_reply
+        gen._client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
         return gen
 
     def _chunks(self, n=2):
@@ -219,7 +219,7 @@ class TestResponseGenerator:
     @pytest.mark.asyncio
     async def test_llm_error_falls_back_to_ticket(self):
         gen = self._make_generator()
-        gen._client.aio.interactions.create = AsyncMock(
+        gen._client.aio.models.generate_content = AsyncMock(
             side_effect=Exception("LLM timeout")
         )
         result = await gen.generate(

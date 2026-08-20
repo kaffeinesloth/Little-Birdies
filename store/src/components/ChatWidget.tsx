@@ -2,10 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, X, Send, Bot, UserCheck, Sparkles, RotateCcw, Zap } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
-const BACKEND_URL = 'http://localhost:8000';
-const SUPABASE_URL = 'https://djgvczqdtysefrdmujrr.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqZ3ZjenFkdHlzZWZyZG11anJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MDMyODAsImV4cCI6MjEwMTk3OTI4MH0.sRdLhWHSV6OF6wjnvXsTwTyhxLl7yS5MQYOMvkKadiw';
+const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 interface MessageItem {
   id: string;
@@ -15,15 +14,29 @@ interface MessageItem {
 }
 
 const DEFAULT_WELCOME =
-  '👋 **Xin chào!** Mình là trợ lý AI thông minh của **SportGear Boutique**.\n\nBạn cần tư vấn chọn size, xem bảng giá khuyến mãi, chính sách freeship hay bảo hành đổi trả 30 ngày không ạ?';
+  '👋 **Hello!** I am the AI assistant for **SportGear Boutique**.\n\nI can help with sizing, promotions, free shipping, warranties, and our 30-day return policy.';
 
 const QUICK_PROMPTS = [
-  'Shop có freeship không?',
-  'Áo Polo Pro Active giá bao nhiêu và có size L không?',
-  'Giày Ultra Boost 2026 có size nào?',
-  'Chính sách đổi trả trong bao lâu?',
-  'Tôi muốn gặp nhân viên CSKH trực tiếp',
+  'Do you offer free shipping?',
+  'How much is the Polo Pro Active, and is size L available?',
+  'Which sizes are available for the Ultra Boost 2026?',
+  'What is your return period?',
+  'I would like to speak with a live agent.',
 ];
+
+const CHAT_SESSION_KEY = 'sportgear_chat_customer_id';
+
+const createCustomerId = () => 'guest_' + Math.random().toString(36).substring(2, 10);
+
+const formatTime = (value?: string | number | Date) =>
+  new Date(value || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+const makeWelcomeMessage = (id = 'welcome'): MessageItem => ({
+  id,
+  sender_type: 'bot',
+  content: DEFAULT_WELCOME,
+  timeStr: formatTime(),
+});
 
 // Helper render Markdown đơn giản (hỗ trợ **in đậm**, • gạch đầu dòng, icon)
 const FormattedMessage: React.FC<{ content: string; isCustomer: boolean }> = ({ content, isCustomer }) => {
@@ -66,14 +79,7 @@ const FormattedMessage: React.FC<{ content: string; isCustomer: boolean }> = ({ 
 export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessage }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inputText, setInputText] = useState('');
-  const [messages, setMessages] = useState<MessageItem[]>([
-    {
-      id: 'welcome',
-      sender_type: 'bot',
-      content: DEFAULT_WELCOME,
-      timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+  const [messages, setMessages] = useState<MessageItem[]>([makeWelcomeMessage()]);
   const [isTyping, setIsTyping] = useState(false);
   const [currentTicketId, setCurrentTicketId] = useState<string | null>(null);
   const displayedIds = useRef<Set<string>>(new Set(['welcome']));
@@ -81,8 +87,16 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
   const pollIntervalRef = useRef<any>(null);
 
   // Tạo customer ID duy nhất cho phiên chat
-  const [customerId] = useState(() => {
-    return 'guest_' + Math.random().toString(36).substring(2, 10);
+  const [customerId, setCustomerId] = useState(() => {
+    try {
+      const existing = window.localStorage.getItem(CHAT_SESSION_KEY);
+      if (existing) return existing;
+      const created = createCustomerId();
+      window.localStorage.setItem(CHAT_SESSION_KEY, created);
+      return created;
+    } catch {
+      return createCustomerId();
+    }
   });
 
   const scrollToBottom = () => {
@@ -93,6 +107,12 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
     scrollToBottom();
   }, [messages, isTyping, isOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
   // Khi có initialMessage từ nút "Hỏi AI" trên Card sản phẩm -> Tự động mở và gửi luôn
   useEffect(() => {
     if (initialMessage && initialMessage.trim()) {
@@ -101,9 +121,57 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
     }
   }, [initialMessage]);
 
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const addSystemMessage = (content: string, idPrefix: string) => {
+    const id = `${idPrefix}_${Date.now()}`;
+    displayedIds.current.add(id);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id,
+        sender_type: 'bot',
+        content,
+        timeStr: formatTime(),
+      },
+    ]);
+  };
+
+  const appendRemoteReply = (msg: any) => {
+    if (msg.sender_type !== 'bot' && msg.sender_type !== 'human') return false;
+
+    const messageId =
+      msg.id ||
+      `${msg.sender_type}_${msg.created_at || Date.now()}_${String(msg.content || '').slice(0, 24)}`;
+
+    if (displayedIds.current.has(messageId)) return false;
+
+    displayedIds.current.add(messageId);
+    setIsTyping(false);
+    setMessages((prev) => {
+      if (prev.some((item) => item.id === messageId)) return prev;
+      return [
+        ...prev,
+        {
+          id: messageId,
+          sender_type: msg.sender_type,
+          content: msg.content || '',
+          timeStr: formatTime(msg.created_at),
+        },
+      ];
+    });
+    return true;
+  };
+
   // Supabase Realtime setup
   useEffect(() => {
     if (!currentTicketId) return;
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
 
     let supabase: any;
     try {
@@ -114,26 +182,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages', filter: `ticket_id=eq.${currentTicketId}` },
           (payload: any) => {
-            const msg = payload.new;
-            if (msg.sender_type === 'bot' || msg.sender_type === 'human') {
-              if (!displayedIds.current.has(msg.id)) {
-                displayedIds.current.add(msg.id);
-                setIsTyping(false);
-                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: msg.id,
-                    sender_type: msg.sender_type,
-                    content: msg.content,
-                    timeStr: new Date(msg.created_at || Date.now()).toLocaleTimeString('vi-VN', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    }),
-                  },
-                ]);
-              }
-            }
+            appendRemoteReply(payload.new);
           }
         )
         .subscribe();
@@ -147,13 +196,20 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
   }, [currentTicketId]);
 
   const pollForReply = (ticketId: string) => {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    stopPolling();
     let attempts = 0;
+    let sawReply = false;
     pollIntervalRef.current = setInterval(async () => {
       attempts++;
-      if (attempts > 20) {
-        clearInterval(pollIntervalRef.current);
+      if (attempts > 120) {
+        stopPolling();
         setIsTyping(false);
+        if (!sawReply) {
+          addSystemMessage(
+            'Your message was received. If an automatic reply does not appear immediately, a SportGear agent can continue the conversation here.',
+            `timeout_${ticketId}`
+          );
+        }
         return;
       }
       try {
@@ -163,29 +219,10 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
           const list = json.data?.messages || [];
           let hasNewReply = false;
           for (const msg of list) {
-            if (
-              (msg.sender_type === 'bot' || msg.sender_type === 'human') &&
-              !displayedIds.current.has(msg.id)
-            ) {
-              displayedIds.current.add(msg.id);
-              setIsTyping(false);
-              hasNewReply = true;
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: msg.id,
-                  sender_type: msg.sender_type,
-                  content: msg.content,
-                  timeStr: new Date(msg.created_at || Date.now()).toLocaleTimeString('vi-VN', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  }),
-                },
-              ]);
-            }
+            hasNewReply = appendRemoteReply(msg) || hasNewReply;
           }
           if (hasNewReply) {
-            clearInterval(pollIntervalRef.current);
+            sawReply = true;
           }
         }
       } catch (e) {
@@ -205,9 +242,10 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
       id: userMsgId,
       sender_type: 'customer',
       content: text,
-      timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+      timeStr: formatTime(),
     };
 
+    stopPolling();
     setMessages((prev) => [...prev, userMessage]);
     if (!customText) setInputText('');
     setIsTyping(true);
@@ -218,7 +256,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customer_id: customerId,
-          customer_name: 'Khách Hàng SportGear Store',
+          customer_name: 'SportGear Store Customer',
           source: 'web',
           content: text,
         }),
@@ -230,6 +268,8 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
           const tId = json.data.ticket_id;
           setCurrentTicketId(tId);
           pollForReply(tId);
+        } else {
+          throw new Error('Missing ticket_id');
         }
       } else {
         throw new Error('Server error');
@@ -237,30 +277,28 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
     } catch (e) {
       console.error('Send error:', e);
       setIsTyping(false);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: 'err_' + Date.now(),
-          sender_type: 'bot',
-          content: 'Dạ xin lỗi bạn, hệ thống đang xử lý một chút. Bạn có thể gửi lại câu hỏi nhé!',
-          timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
+      addSystemMessage(
+        'Sorry, the chat connection is currently unstable. Please try sending your message again.',
+        'err'
+      );
     }
   };
 
   const handleResetChat = () => {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    stopPolling();
+    const nextCustomerId = createCustomerId();
+    try {
+      window.localStorage.setItem(CHAT_SESSION_KEY, nextCustomerId);
+    } catch {
+      // Ignore storage errors; state still starts a fresh in-memory session.
+    }
+    setCustomerId(nextCustomerId);
     setCurrentTicketId(null);
-    displayedIds.current = new Set(['welcome']);
-    setMessages([
-      {
-        id: 'welcome_' + Date.now(),
-        sender_type: 'bot',
-        content: DEFAULT_WELCOME,
-        timeStr: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
-      },
-    ]);
+    setIsTyping(false);
+    setInputText('');
+    const welcome = makeWelcomeMessage('welcome_' + Date.now());
+    displayedIds.current = new Set([welcome.id]);
+    setMessages([welcome]);
   };
 
   return (
@@ -298,14 +336,14 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
                   <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
                 </h3>
                 <p className="text-[11px] text-sky-300 font-medium flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" /> Trực Tuyến 24/7 • Phản Hồi Siêu Tốc
+                  <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" /> Online 24/7 • Fast Responses
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={handleResetChat}
-                title="Tạo cuộc hội thoại mới"
+                title="Start a new conversation"
                 className="text-slate-400 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -343,13 +381,13 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
                   >
                     {isHuman && (
                       <div className="text-[11px] font-bold text-amber-800 mb-1.5 flex items-center gap-1.5 pb-1 border-b border-amber-200">
-                        <UserCheck className="w-3.5 h-3.5 text-amber-700" /> Nhân Viên CSKH (Human Live Support)
+                        <UserCheck className="w-3.5 h-3.5 text-amber-700" /> Support Agent (Live Human)
                       </div>
                     )}
                     <FormattedMessage content={m.content} isCustomer={isCustomer} />
                   </div>
                   <span className="text-[10px] text-slate-400 px-1 font-medium">
-                    {isCustomer ? 'Bạn' : isHuman ? 'Chuyên Viên CSKH' : 'SportGear AI'} • {m.timeStr}
+                    {isCustomer ? 'You' : isHuman ? 'Support Agent' : 'SportGear AI'} • {m.timeStr}
                   </span>
                 </div>
               );
@@ -362,7 +400,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
                   <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce"></div>
                   <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce [animation-delay:0.2s]"></div>
                   <div className="w-2 h-2 bg-sky-500 rounded-full animate-bounce [animation-delay:0.4s]"></div>
-                  <span className="text-[11px] text-slate-400 font-medium pl-1">AI đang soạn câu trả lời...</span>
+                  <span className="text-[11px] text-slate-400 font-medium pl-1">AI is writing a reply...</span>
                 </div>
               </div>
             )}
@@ -389,7 +427,7 @@ export const ChatWidget: React.FC<{ initialMessage?: string }> = ({ initialMessa
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Nhập câu hỏi tư vấn sản phẩm, freeship, size..."
+              placeholder="Ask about products, shipping, sizing..."
               className="flex-1 bg-slate-100 border-none rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-slate-800 placeholder:text-slate-400"
             />
             <button

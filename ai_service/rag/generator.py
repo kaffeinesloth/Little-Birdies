@@ -28,22 +28,22 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _SYSTEM_TEMPLATE = (_PROMPTS_DIR / "rag_system.txt").read_text(encoding="utf-8")
 
 _USER_TEMPLATE = """
---- TÀI LIỆU THAM KHẢO ---
+--- REFERENCE KNOWLEDGE ---
 {context}
 --------------------------
 
-LỊCH SỬ HỘI THOẠI:
+RECENT CONVERSATION:
 {history}
 
-KHÁCH HỎI: {question}
+CUSTOMER QUESTION: {question}
 
-Trả lời:"""
+Answer in English:"""
 
 # Khi không tìm thấy thông tin liên quan
 _LOW_CONFIDENCE_REPLY = (
-    "Cảm ơn bạn đã liên hệ! Câu hỏi này mình cần kiểm tra thêm để trả lời "
-    "chính xác cho bạn. Mình sẽ chuyển đến nhân viên hỗ trợ ngay nhé, "
-    "thường trong 5–10 phút sẽ có người liên hệ lại! 🙏"
+    "Thank you for contacting us. I need to verify this information before "
+    "answering accurately, so I will transfer it to a support agent. Someone "
+    "will normally contact you within 5–10 minutes. 🙏"
 )
 
 
@@ -104,8 +104,16 @@ class ResponseGenerator:
         try:
             reply = await self._call_llm(system_prompt, user_prompt)
         except Exception as exc:
-            logger.warning("LLM generation failed (%s) → Falling back to direct context extraction", exc)
-            reply = self._extract_direct_answer(question, chunks, tenant_config)
+            logger.warning("LLM generation failed (%s) → escalating safely", exc)
+            return {
+                "text": _LOW_CONFIDENCE_REPLY,
+                "confidence": "low",
+                "should_create_ticket": True,
+                "source_docs": list({
+                    c["metadata"].get("doc_name", "Unknown")
+                    for c in chunks
+                }),
+            }
 
         confidence = (
             "high"   if max_similarity >= 0.75 else
@@ -289,17 +297,17 @@ class ResponseGenerator:
     def _build_context(chunks: list[dict]) -> str:
         parts = []
         for i, chunk in enumerate(chunks, 1):
-            doc_name = chunk["metadata"].get("doc_name", "Tài liệu")
-            parts.append(f"[{i}] Từ '{doc_name}':\n{chunk['text']}")
+            doc_name = chunk["metadata"].get("doc_name", "Document")
+            parts.append(f"[{i}] From '{doc_name}':\n{chunk['text']}")
         return "\n\n".join(parts)
 
     @staticmethod
     def _format_history(history: list[dict], max_turns: int = 5) -> str:
         if not history:
-            return "(Đây là tin nhắn đầu tiên)"
+            return "(This is the first message.)"
         recent = history[-(max_turns * 2):]
         lines  = []
         for msg in recent:
-            label = "Khách" if msg["role"] == "user" else "Bot"
+            label = "Customer" if msg["role"] == "user" else "Bot"
             lines.append(f"{label}: {msg['content'][:300]}")
         return "\n".join(lines)

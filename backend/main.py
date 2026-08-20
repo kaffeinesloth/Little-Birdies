@@ -8,7 +8,7 @@ from api.routers import tickets, messages, documents, channels, users, webhooks
 
 app = FastAPI(
     title="Smart Helpdesk API",
-    description="Backend API cho hệ thống CSKH tự động bằng AI.",
+    description="Backend API for the AI-powered customer-support system.",
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",

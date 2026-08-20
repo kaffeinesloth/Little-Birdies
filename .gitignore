@@ -17,16 +17,31 @@ env
 *.env
 *.key
 *.json
+!store/package.json
+!store/package-lock.json
+!web/package.json
+!web/package-lock.json
 
-# Python
-__pycache__/
-.venv/
-.venv_gpu/
+# App build artifacts
+store/node_modules/
+store/dist/
+web/node_modules/
+web/dist/
+mobile/build/
+mobile/.dart_tool/
+mobile/ios/Pods/
+mobile/macos/Pods/
 
-# Environment variables — KHÔNG commit lên Git
-.env
+# Local generated data
+chroma_db/
+ai_service/chroma_db/
+ai_service/local_knowledge/
+ai_service/:memory:.ses
+
+# Environment variables — KHONG commit len Git
 backend/.env
 ai_service/.env
+store/.env
 
 # IDE
 .vscode/
@@ -35,6 +50,3 @@ ai_service/.env
 # OS
 .DS_Store
 Thumbs.db
-
-# ChromaDB data (nếu chạy local)
-chroma_db/

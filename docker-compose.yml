@@ -5,6 +5,7 @@ services:
       dockerfile: backend/Dockerfile
     env_file:
       - path: backend/.env
+        required: false
     environment:
       AI_SERVICE_URL: http://ai-service:8001
     ports:
@@ -12,13 +13,12 @@ services:
     depends_on:
       ai-service:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   ai-service:
     build:
@@ -26,36 +26,95 @@ services:
       dockerfile: ai_service/Dockerfile
     env_file:
       - path: ai_service/.env
+        required: false
     environment:
       BACKEND_URL: http://backend:8000
       CHROMA_PERSIST_DIR: /data/chroma_db
+      LOCAL_KNOWLEDGE_DIR: /data/knowledge_uploads
+      AI_PROVIDER: ${AI_PROVIDER:-auto}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:8b-q4_K_M}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
     ports:
       - "8001:8001"
     volumes:
-      - ./ai_service:/app
       - ai_chroma_data:/data/chroma_db
+      - ai_knowledge_data:/data/knowledge_uploads
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   store-website:
-    image: nginx:alpine
-    volumes:
-      - ./store/dist:/usr/share/nginx/html:ro
+    build:
+      context: .
+      dockerfile: store/Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_API_BASE_URL: ${STORE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   flutter-web:
     build:
       context: .
       dockerfile: mobile/Dockerfile.web
+      args:
+        SUPABASE_URL: ${SUPABASE_URL:-}
+        SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+        API_BASE_URL: ${STAFF_API_BASE_URL:-http://localhost:8000}
+        AI_BASE_URL: ${STAFF_AI_BASE_URL:-http://localhost:8001}
     ports:
       - "8080:80"
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    gpus: all
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        ollama pull ${OLLAMA_CHAT_MODEL:-qwen3:8b-q4_K_M} &&
+        ollama pull ${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+    depends_on:
+      ollama:
+        condition: service_healthy
 
 volumes:
   ai_chroma_data:
+  ai_knowledge_data:
+  ollama_models:

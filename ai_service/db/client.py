@@ -31,6 +31,9 @@ async def get_supabase() -> AsyncClient:
     Gọi ở startup hoặc trong Depends().
     """
     global _client_holder
+    if not settings.supabase_url or not settings.supabase_service_key:
+        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY are not configured")
+
     if _client_holder is None:
         _client_holder = await acreate_client(
             supabase_url=settings.supabase_url,

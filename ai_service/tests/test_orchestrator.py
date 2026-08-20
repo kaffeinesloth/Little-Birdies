@@ -151,7 +151,7 @@ class TestRouting:
         result = await orch.process("t1", "conv-1", "Thời tiết hôm nay thế nào?")
 
         assert result.state == ConvState.AI_HANDLING
-        assert "sản phẩm" in result.reply.lower() or "hỗ trợ" in result.reply.lower()
+        assert "products" in result.reply.lower() or "help" in result.reply.lower()
 
     @pytest.mark.asyncio
     async def test_human_handling_no_auto_reply(self):
@@ -255,5 +255,5 @@ class TestHistorySummary:
             {"role": "assistant", "content": "Giá 250k"},
         ]
         result = AgentOrchestrator._summarize_history(history)
-        assert "Khách" in result
+        assert "Customer" in result
         assert "Bot"   in result

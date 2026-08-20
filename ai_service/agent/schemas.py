@@ -148,3 +148,6 @@ class DocumentUploadResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
+    provider: str = "fallback"
+    model: str | None = None
+    runtime_ready: bool = True
