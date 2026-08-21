@@ -39,7 +39,7 @@ if ($LocalAI) {
     if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
         nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
     } else {
-        Write-Warning 'No NVIDIA runtime was detected. Use the fallback demo mode on this laptop.'
+        Write-Warning 'No NVIDIA runtime was detected. Ollama will run on CPU, which is slower but works for the demo.'
     }
 }
 

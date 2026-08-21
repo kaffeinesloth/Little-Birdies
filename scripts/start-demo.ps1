@@ -26,6 +26,28 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Docker Compose could not start the demo. Run .\scripts\demo-doctor.ps1 and inspect docker compose logs.'
 }
 
+if ($LocalAI) {
+    Write-Host 'Waiting for Ollama model readiness. First run can take several minutes while models download...' -ForegroundColor Cyan
+    $Deadline = (Get-Date).AddMinutes(20)
+    $Ready = $false
+    while ((Get-Date) -lt $Deadline) {
+        try {
+            $Health = Invoke-RestMethod -Uri 'http://localhost:8001/health' -TimeoutSec 5
+            if ($Health.provider -eq 'ollama' -and $Health.runtime_ready -eq $true) {
+                $Ready = $true
+                break
+            }
+            Write-Host ("AI health: provider={0}, runtime_ready={1}" -f $Health.provider, $Health.runtime_ready)
+        } catch {
+            Write-Host 'AI health endpoint is not ready yet.'
+        }
+        Start-Sleep -Seconds 15
+    }
+    if (-not $Ready) {
+        throw 'Local AI did not become ready within 20 minutes. Run "docker compose --profile local-ai logs ollama-init ollama ai-service" to inspect model download/startup.'
+    }
+}
+
 Write-Host ''
 Write-Host 'Smart Helpdesk is ready.' -ForegroundColor Green
 Write-Host 'Customer store:  http://localhost:3000'

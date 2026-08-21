@@ -25,7 +25,7 @@ async def test_local_agent_returns_generated_grounded_answer(monkeypatch):
         return True
 
     async def retrieve(question, top_k=3):
-        return ["The Polo Pro Active costs 320,000 VND."]
+        return [("The Polo Pro Active costs 320,000 VND.", "uploaded_policy.txt")]
 
     async def generate(question, chunks):
         assert "320,000" in chunks[0]
@@ -42,5 +42,30 @@ async def test_local_agent_returns_generated_grounded_answer(monkeypatch):
     )
 
     assert result.reply.startswith("The Polo Pro Active")
+    assert result.source_docs == ["uploaded_policy.txt"]
     assert result.metadata["provider"] == "ollama"
     assert result.metadata["local_ai"] is True
+
+
+@pytest.mark.asyncio
+async def test_local_retriever_refreshes_uploaded_documents(tmp_path, monkeypatch):
+    from agent import local_ollama
+
+    monkeypatch.setattr(local_ollama.settings, "local_knowledge_dir", str(tmp_path))
+    uploaded = tmp_path / "doc_123__shipping_policy.txt"
+    uploaded.write_text(
+        "Custom pickup policy\n\nCustomers may pick up new racket orders after 18:00.",
+        encoding="utf-8",
+    )
+
+    retriever = local_ollama.LocalKnowledgeRetriever()
+
+    async def unavailable(inputs):
+        raise RuntimeError("embedding model unavailable in unit test")
+
+    monkeypatch.setattr(retriever, "_request_embeddings", unavailable)
+
+    results = await retriever.retrieve("When can customers pick up racket orders?")
+
+    assert any("after 18:00" in chunk for chunk, _ in results)
+    assert any(source == "doc_123__shipping_policy.txt" for _, source in results)

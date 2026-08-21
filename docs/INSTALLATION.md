@@ -27,13 +27,12 @@ The default stack uses deterministic offline AI and in-memory ticket data. Chrom
 
 ### Optional local AI
 
-- NVIDIA GPU with 8 GB VRAM minimum; 10–12 GB recommended for Qwen3 8B
-- Current NVIDIA driver and Docker GPU support
 - 16 GB system RAM recommended
 - Approximately 10 GB additional disk space for Ollama models
 - Port `11434` available
+- Optional: NVIDIA GPU with current driver and Docker GPU support for faster responses
 
-The standard fallback demo is recommended on laptops without an NVIDIA GPU.
+The local-AI profile can run on CPU-only Windows Docker Desktop, but first response latency is much slower than GPU. The standard fallback demo is still the safest presentation mode on low-spec laptops.
 
 ## Fresh Installation
 
@@ -104,7 +103,7 @@ macOS/Linux:
 sh scripts/start-demo.sh --local-ai
 ```
 
-The first run downloads `qwen3:8b-q4_K_M` and `qwen3-embedding:0.6b`, so it can take several minutes. Check progress with:
+The first run downloads `qwen3:8b-q4_K_M` and `qwen3-embedding:0.6b`, so it can take several minutes. The launcher waits until `/health` reports the Ollama model is ready. Check progress with:
 
 ```bash
 docker compose --profile local-ai logs --follow ollama-init
@@ -118,7 +117,7 @@ curl http://localhost:8001/health
 
 When the model is ready, the response reports `"provider":"ollama"` and `"runtime_ready":true`. Until then, the application remains usable with fallback responses.
 
-For a smaller GPU, copy `.env.example` to `.env` and set a smaller Ollama chat model that exists in your Ollama registry.
+For a smaller GPU or CPU-only laptop, copy `.env.example` to `.env` and set a smaller Ollama chat model that exists in your Ollama registry.
 
 ## Android Demo App
 

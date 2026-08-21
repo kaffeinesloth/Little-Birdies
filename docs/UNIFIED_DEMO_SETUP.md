@@ -21,19 +21,19 @@ The AI replies are deterministic, so this is the safest presentation mode.
 
 ### Real local-AI mode
 
-Use this on a Windows laptop with an NVIDIA GPU and at least 8 GB VRAM. A 10–12 GB GPU is recommended for the default Qwen3 8B model.
+Use this when you want the demo to answer with a real local Ollama model instead of deterministic fallback responses. It runs on CPU-only Windows Docker Desktop, but response latency is much slower. An NVIDIA GPU with 8 GB VRAM minimum, or 10–12 GB recommended, gives a better live demo.
 
 ```powershell
 .\scripts\start-demo.ps1 -LocalAI
 ```
 
-The first startup downloads approximately 6 GB of models and can take several minutes. Docker keeps them in the `ollama_models` volume for later runs.
+The first startup downloads approximately 6 GB of models and can take several minutes. Docker keeps them in the `ollama_models` volume for later runs. The launcher waits until the AI service health check reports the Ollama provider is ready.
 
 The local stack uses:
 
-- `qwen3:8b-q4_K_M` for English customer replies.
+- `qwen3:8b-q4_K_M` for grounded customer replies.
 - `qwen3-embedding:0.6b` for local document retrieval.
-- Ollama for GPU inference.
+- Ollama for local inference.
 - Local knowledge files and the bundled SportGear document for grounded RAG answers.
 
 If Ollama or its model is not ready, the AI service automatically uses the deterministic fallback instead of breaking the chat.
@@ -49,7 +49,7 @@ Do not use the local-AI profile on a CPU-only presentation laptop unless slow re
 ## Before Presentation Day
 
 1. Install Docker Desktop and enable its WSL 2 engine.
-2. For local AI, install a current NVIDIA driver and enable Docker Desktop GPU support.
+2. For faster local AI, install a current NVIDIA driver and enable Docker Desktop GPU support.
 3. Clone or copy the repository onto the presentation laptop.
 4. Run the preflight check:
 
@@ -141,7 +141,7 @@ The mobile and browser builds use the same Flutter code and backend data. Their 
 
 In Super Admin mode, open `Manage` and select `Upload Document to ChromaDB` (or `Add knowledge` on a phone). Choose a TXT, PDF, or DOCX file from the device, review its name and size, then select `Upload & Index`. Files may be up to 10 MB.
 
-In local mode, the AI service extracts readable text and stores it in the persistent `ai_knowledge_data` Docker volume. The next customer question can retrieve it without Supabase. AI replies remain in English even when an uploaded document uses another language.
+In local mode, the AI service extracts readable text and stores it in the persistent `ai_knowledge_data` Docker volume. The next customer question can retrieve it without Supabase, and the retriever refreshes uploaded documents automatically before each answer. AI replies try to match the customer's language when possible.
 
 Knowledge uploads are intentionally limited to the Super Admin demo role. Store customers cannot modify the AI knowledge base.
 

@@ -14,7 +14,11 @@ for arg in "$@"; do
   esac
 done
 
-sh "$PROJECT_ROOT/scripts/demo-doctor.sh"
+if [ "$LOCAL_AI" -eq 1 ]; then
+  sh "$PROJECT_ROOT/scripts/demo-doctor.sh" --local-ai
+else
+  sh "$PROJECT_ROOT/scripts/demo-doctor.sh"
+fi
 
 if [ "$LOCAL_AI" -eq 1 ]; then
   set -- compose --profile local-ai up --detach --wait
@@ -27,6 +31,29 @@ if [ "$NO_BUILD" -eq 0 ]; then
 fi
 
 docker "$@"
+
+if [ "$LOCAL_AI" -eq 1 ]; then
+  echo "Waiting for Ollama model readiness. First run can take several minutes while models download..."
+  deadline=$(( $(date +%s) + 1200 ))
+  ready=0
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    health=$(curl -fsS http://localhost:8001/health 2>/dev/null || true)
+    if printf '%s' "$health" | grep -q '"provider":"ollama"' && printf '%s' "$health" | grep -q '"runtime_ready":true'; then
+      ready=1
+      break
+    fi
+    if [ -n "$health" ]; then
+      echo "AI health: $health"
+    else
+      echo "AI health endpoint is not ready yet."
+    fi
+    sleep 15
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo 'Local AI did not become ready within 20 minutes. Run "docker compose --profile local-ai logs ollama-init ollama ai-service" to inspect model download/startup.' >&2
+    exit 1
+  fi
+fi
 
 echo
 echo "Smart Helpdesk is ready."
